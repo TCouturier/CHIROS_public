@@ -1,0 +1,1926 @@
+---
+title: "Echantillonnage temporel chiros"
+author: "Thibaut Couturier"
+output:
+  html_document: 
+  toc : TRUE
+  
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, options(digits=5))
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+```
+
+
+Analyse en date du 
+`r Sys.Date()`
+
+# Importation, préparation des données
+
+```{r results = FALSE}
+data <- read_csv2("../data/BBF20220117_export_chiros_hiver_CEFE+TC.csv")
+
+data %>%
+  mutate(CD_SITE=as.factor(CD_SITE),
+         COMMUNE=as.factor(COMMUNE),
+         LIEU_DIT=as.factor(LIEU_DIT),
+         LOCALISATION=as.factor(LOCALISATION),
+         PRECISION=as.factor(PRECISION),
+         TYPE=as.factor(TYPE),
+         CD_RELEVE=as.factor(CD_RELEVE),
+         DATE_OBS=lubridate::dmy(DATE_OBS),
+         OBSERVATEUR=as.factor(OBSERVATEUR),
+         METHODE=as.factor(METHODE),
+         SAISON=as.factor(SAISON),
+         TAXON=as.factor(TAXON),
+         STATUT=as.factor(STATUT),
+         ans=str_sub(SAISON,7,10)) -> data 
+```
+
+
+# Reconstitution tableau données ; exemple du Murin de Daubenton sur 20 ans
+
+
+## Modèle jags pour estimer tendances
+
+Sur la base des tirages de site réalisés après application des filtres, nous avons tiré 100 sites avec pondération par leur taille, puis lancé un modèle d’estimation des taux de croissance. 
+
+```{r eval = FALSE}
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_daubenton
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins cinq relevés, et au moins un individu contacté. 
+#########################
+
+data_daubenton %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<16 & mean!=0) -> data_daubenton_filtre3
+
+
+#########################
+#  TIRAGE : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+#########################
+
+data_daubenton_filtre3 %>%
+  sample_n(size=100, weight=mean_log) -> SEL_100_P1
+
+
+
+#########################
+# modele jags
+#########################
+
+
+#rm(list = ls(all.names = TRUE)) # nettoyer l'environnemnt
+options(digits = 3, scipen = 999)
+
+
+# Comptages annuels
+SEL_100_P1 %>%
+  select(c(2:21)) -> group_counts
+
+y <- group_counts
+
+# Define max.N0 for the model
+max.N0 <- round(sum(y[,1], na.rm = TRUE)*1.5)
+
+# Ajouter des NA's pour les projections demo
+ny0 <- ncol(y)
+y[, (ny0+1:30)] <- NA
+colnames(y)[ny0+(1:30)] <- paste0("X", as.numeric(gsub("X", "", names(y)[ny0])) + (1:30))
+y %>% 
+  mutate_if(is.logical, as.numeric) -> y # ajout pour cluster (sinon erreur)
+
+# Fit the data model #####
+# Data bundle
+jags.data <- list(y=y, I = nrow(y), T=ncol(y), 
+                  max.N0 = max.N0)
+str(jags.data)
+
+
+
+# Write JAGS model file ####
+cat(file = "model_LAMBDA.txt", "
+  model{
+    
+    ## National Scale
+    # Prior on lambda (population growth rate)
+    mu.lam_0 ~ dunif(0, 10)
+
+    # Prior on N0
+    N[1] ~ dunif(0, max.N0)
+
+    # Process model over time (population growth)
+    for (t in 1:(T-1)){
+      lambda[t] <- mu.lam_0
+      N[t+1] <- N[t] * lambda[t]
+    } # t
+    
+    
+    ## Colony-groups Scale
+    # Priors
+    for(i in 1:I){
+      b0[i] ~ dunif(0,100)
+      b1[i] ~ dunif(0,100)
+    } # i
+      
+    for(t in 1:T){
+      for(i in 1:I){
+        w[i,t] <- b0[i] + b1[i]*(t-1)
+        gamma[i,t] <- w[i,t]/sum(w[1:I,t])
+      } # i
+    } # t
+    
+    # Process model : repartition of N among colony-groups 
+    for(t in 1:T){
+      NN[t] <- round(N[t])
+      n[1:I,t] <- gamma[1:I,t]*NN[t]
+      Npair[1:I,t] <- n[1:I,t]
+    } # t
+    
+    ## Observation process
+	# Prior
+	sig.y ~ dunif(0.1, 500)
+	tau.y <- pow(sig.y, -2)
+
+	# Modele
+
+    for(i in 1:I){
+      for(t in 1:T){
+	y[i,t] ~ dnorm(n[i,t], tau.y)
+      } # t
+    } # i
+    
+  } # model
+") # cat
+
+# Initial values
+inits <- function(){
+  list(
+    N = round(sum(y[,1], na.rm = TRUE)*(1+runif(1,0,0.5))),
+    n = round(y)
+  )
+}
+inits()
+
+# Parameters monitored
+parameters <- c("mu.lam_0", "b0", "b1", "N", "Npair", "gamma")
+
+# MCMC settings
+nc <- 3
+ni <- 20000
+nb <- 1000
+na <- 5000
+nt <- 5
+
+# Call JAGS
+system.time(
+  out_SEL_100_P_daubenton <- jags(data = jags.data, inits = NULL, 
+                                         parameters.to.save = parameters, 
+                                         model.file = "model_LAMBDA.txt", 
+                                         n.chains = nc, n.iter = ni, 
+                                         n.burnin = nb, n.adapt = na,
+                                         n.thin = nt, DIC = FALSE, 
+                                         parallel = FALSE
+  ) # close jags fn
+) # clos time fn
+
+
+
+
+out_SEL_100_P_daubenton$summary %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         ncolonies=nrow(y),
+         tirage=1) %>%
+  slice(1) -> SEL_100
+
+write_csv2(SEL_100, 'recap_mu.lam_SEL_100.csv')
+
+
+```
+
+
+## Reconstitution du jeu de données
+
+A partir des effectifs prédits sur chaque site/année obtenus à partir de ce modèle (médiane des postérieurs), nous avons récupéré la différence entre ces effectifs prédits et ceux observés (comptages réels) afin de calculer une variance "résiduelle" moyenne sur chaque site. A partir de cette variance estimée et de la prédiction moyenne de chaque site/année, nous avons tiré des valeurs dans une loi lognormale. Le choix de cette loi de distribution permettait de ne pas tirer des valeurs en des-sous de zéro, comme cela aurait été le cas avec une loi normale. Ces valeurs estimées nous ont servi à reconstituer les données manquantes dans les séries temporelles. Nous avons conservé les comptages réels lorsqu'ils existaient.  
+
+
+
+```{r eval = FALSE}
+
+#########################
+## Préparation tableau données pour l'échantillonnage temporel
+#########################
+
+
+years <- as.vector(gsub("X", "", names(y)))
+CD_SITE<-SEL_100_P1[1]
+
+
+# medianes
+est_Npairs_q50<-out_SEL_100_P_daubenton$q50$Npair
+
+est_Npairs_q50 %>%
+  as.data.frame() %>%
+  rename_at(vars(V1:V50), ~years) %>%
+  bind_cols(CD_SITE) %>%
+  rename(CD_SITE = 51) %>%
+  mutate(CD_SITE=as.factor(CD_SITE)) %>% 
+  pivot_longer(c('2000':'2049'), names_to = c("annee"), values_to = c("q50")) -> est_Npairs_q50
+
+# q2.5
+est_Npairs_q2.5<-out_SEL_100_P_daubenton$q2.5$Npair
+
+est_Npairs_q2.5 %>%
+  as.data.frame() %>%
+  rename_at(vars(V1:V50), ~years) %>%
+  bind_cols(CD_SITE) %>%
+  rename(CD_SITE = 51) %>%
+  mutate(CD_SITE=as.factor(CD_SITE)) %>% 
+  pivot_longer(c('2000':'2049'), names_to = c("annee"), values_to = c("q2.5")) -> est_Npairs_q2.5
+
+
+# q97.5
+est_Npairs_q97.5<-out_SEL_100_P_daubenton$q97.5$Npair
+
+est_Npairs_q97.5 %>%
+  as.data.frame() %>%
+  rename_at(vars(V1:V50), ~years) %>%
+  bind_cols(CD_SITE) %>%
+  rename(CD_SITE = 51) %>%
+  mutate(CD_SITE=as.factor(CD_SITE)) %>% 
+  pivot_longer(c('2000':'2049'), names_to = c("annee"), values_to = c("q97.5")) -> est_Npairs_q97.5
+
+
+# effectifs comptés (réels)
+SEL_100_P1 %>%
+  as.data.frame() %>%
+  mutate(CD_SITE=as.factor(CD_SITE)) %>% 
+  pivot_longer(c('2000':'2019'), names_to = c("annee"), values_to = c("comptage")) -> count_Npairs
+
+
+est_Npairs_q2.5 %>%
+  left_join(est_Npairs_q50, by=c('CD_SITE', 'annee')) %>%
+  left_join(est_Npairs_q97.5, by=c('CD_SITE', 'annee')) %>%
+  left_join(count_Npairs, by=c('CD_SITE', 'annee')) %>%
+  mutate(CD_SITE=as.factor(CD_SITE),
+         dif=comptage-q50,
+         dif2=dif^2) -> est_Npairs
+
+est_Npairs %>%
+  group_by(CD_SITE) %>%
+  summarise(var_res_moy=mean(dif2, na.rm=TRUE),
+            var_res_sqrt=sqrt(var_res_moy)) -> var_res
+
+
+# pour la transforamtion lognormale, voir ici : https://msalganik.wordpress.com/2017/01/21/making-sense-of-the-rlnorm-function-in-r/comment-page-1/
+
+est_Npairs %>%
+  left_join(var_res, by='CD_SITE') %>%
+  mutate(var_res_sample=rnorm(n=nrow(est_Npairs), mean=q50, sd=var_res_sqrt),
+         location = log(q50^2 / sqrt(var_res_sqrt^2 + q50^2)),
+         shape = sqrt(log(1 + (var_res_sqrt^2 / q50^2))),
+         var_res_sample_lnorm = rlnorm(n = nrow(est_Npairs), location, shape),
+         nodata=case_when(is.na(comptage) ~ 1, TRUE~0),
+         nodata=as.factor(nodata),
+         samp_real=case_when(nodata==1 ~ round(var_res_sample_lnorm), TRUE~comptage))  -> est_Npairs2
+
+
+write_csv2(est_Npairs2, 'tab_reconstitution_daubenton_lnorm.csv')
+
+```
+
+
+
+Exemple d’un site hivernal à Murin de Daubenton. La courbe représente la tendance estimée d’après le mo-dèle (avec intervalle de crédibilité en ombré) ; Les points rouges correspondent aux comptages réels et les points verts à des comptages tirés dans une loi lognormale. 
+
+```{r results = FALSE, fig.width=5.5, fig.height=3.5}
+
+SEL_100_1 <- read_csv2("../outputs/tab_reconstitution_daubenton_lnorm.csv")
+
+
+SEL_100_1 %>%
+  mutate(annee=as.numeric(annee),
+         nodata=as.factor(nodata)) -> SEL_100_1 
+
+SEL_100_1 %>%
+  filter(`annee`<2020 & CD_SITE %in% c(  '71425.005')) %>%
+  ggplot() +
+  geom_ribbon(aes(x=annee, ymin=q2.5, ymax=q97.5, group=CD_SITE, fill=CD_SITE), alpha=0.1) +
+  geom_line(aes(x = annee, y=q50, group=CD_SITE, color=CD_SITE), size=1) +
+  geom_point(aes(x = annee, y=samp_real, group=nodata, color=nodata), size=2) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 13),
+        axis.title.y = element_text(size=13),
+        axis.text.x = element_text(size=12), 
+        axis.text.y = element_text(size=12),
+        legend.position="none") +
+  xlab('année') +
+  ylab('effectifs') +
+  ylim(0,20) +
+  scale_x_continuous(breaks=seq(2000,2019,by=2))
+
+
+```
+
+
+# Echantillonnage temporel 
+
+
+Pour chaque espèce, on obtient un tableau intégrant les données réelles, complété par les valeurs prédites sur 100 sites et sur 20 années. 
+
+```{r results = FALSE}
+
+# On reconstitue les séries temporelles avec les comptages réels et trous complétés par estimations (tirage loi normale, voir ci-dessus) 
+SEL_100_1 %>%
+  mutate(samp_real=round(samp_real),
+         samp_real=case_when(samp_real<0~0, TRUE~samp_real)) %>%
+  filter(annee<2020) %>%
+  select(CD_SITE, annee, samp_real) %>%
+  pivot_wider(id_cols=c(CD_SITE), names_from=annee, values_from=samp_real) -> years_all
+
+
+# ici le tableau complet, ordonné par effectifs moyens des sites   
+years_all %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019')),
+         mean_log=log(mean+1)) %>%
+  ungroup() %>%
+  arrange(desc(mean_log)) -> tab_complet  
+
+
+```
+
+
+Exemple de tableau de données pour le murin de Daubenton : 10 premiers sites
+
+```{r }
+
+tab_complet %>%
+  head(10) %>%
+  knitr::kable() 
+
+``` 
+
+
+
+On teste deux tirages : on sélectionne une année sur deux (donc deux tirages testés, en commençant par 2005, ou en commençant par 2006) puis une année sur trois (trois tirages testés). Des tests préalables en remplaçant les valeurs non tirées par des valeurs manquantes (NA) ne fonctionnaient pas en raison d'une forte structuration des NA dans les jeux de données obtenus. Nous avons donc utilisé la solution de supprimer les colonnes des années non tirées, puis appliqué un correctif sur les tendances (racine carrée de lambda si une année sur deux, racine cubique de lambda si une année sur trois). Pour chaque espèce, on relance le modèle jags sur chacun des six jeux de données (incluant le jeu de données complet, sans ré-échantillonnage). 
+
+
+```{r eval = FALSE}
+
+### OLD : en introduisant des NA
+
+###### échantillonnage une année sur deux 
+pairs<-seq(from=2, to=98, by=2) 
+pairs_cols<-seq(from=2, to=16, by=2)
+impairs_cols<-seq(from=3, to=15, by=2)
+
+samp2 <- tab_complet
+
+for (i in pairs) { 
+  
+  samp2[1, pairs_cols] <- NA
+  samp2[2, impairs_cols] <- NA
+  samp2[i+1, pairs_cols] <- NA
+  samp2[i+2, impairs_cols] <- NA
+
+  }
+
+###### deux années sur trois
+
+# loop1
+samp3 <- tab_complet
+
+for (i in seq(1,100, by=3)) { 
+
+    for (j in seq(2,16, by=3)) { 
+  
+    samp3[i, j] <- NA
+  }
+}
+
+# loop2
+for (i in seq(2,100, by=3)) { 
+
+    for (j in seq(3,16, by=3)) { 
+  
+    samp3[i, j] <- NA
+  }
+}
+
+# loop3
+for (i in seq(3,100, by=3)) { 
+
+    for (j in seq(4,16, by=3)) { 
+  
+    samp3[i, j] <- NA
+  }
+}
+
+###### une  année sur trois
+samp4 <- tab_complet
+samp4[,2:16] <- NA
+
+# loop1
+for (i in seq(1,100, by=3)) { 
+
+    for (j in seq(2,16, by=3)) { 
+  
+    samp4[i, j] <- tab_complet[i,j]
+  }
+}
+
+# loop2
+for (i in seq(2,100, by=3)) { 
+
+    for (j in seq(3,16, by=3)) { 
+  
+    samp4[i, j] <- tab_complet[i,j]
+  }
+}
+
+# loop3
+for (i in seq(3,100, by=3)) { 
+
+    for (j in seq(4,16, by=3)) { 
+  
+    samp4[i, j] <- tab_complet[i,j]
+  }
+}
+
+
+###### une  année sur trois 10 plus gros sites, une année sur deux petits sites
+samp5 <- tab_complet
+samp5[1:10,] <- samp4[1:10,]
+samp5[11:100,] <- samp2[11:100,]
+```
+
+
+
+
+```{r eval = FALSE}
+
+
+### Supression années (ok)
+
+###### une année sur deux, mais en supprimant les colonnes
+
+tab_complet %>%
+  select(CD_SITE, `2005`, `2007`, `2009`, `2011`, `2013`, `2015`, `2017`, `2019`, mean, mean_log) -> samp6
+
+###### une année sur deux, en supprimant les colonnes, alterné avec fois précédente. 
+
+tab_complet %>%
+  select(CD_SITE, `2006`, `2008`, `2010`, `2012`, `2014`, `2016`, `2018`, mean, mean_log) -> samp7
+
+###### une année sur trois, en supprimant les colonnes. 
+
+tab_complet %>%
+  select(CD_SITE, `2005`, `2008`, `2011`, `2014`, `2017`, mean, mean_log) -> samp8
+
+###### une année sur trois, en supprimant les colonnes. 
+
+tab_complet %>%
+  select(CD_SITE, `2006`, `2009`, `2012`, `2015`, `2018`, mean, mean_log) -> samp9
+
+###### une année sur trois, en supprimant les colonnes. 
+
+tab_complet %>%
+  select(CD_SITE, `2007`, `2010`, `2013`, `2016`, `2019`, mean, mean_log) -> samp10
+
+
+```
+
+
+
+# Récupération résultats cluster toutes espèces
+
+## Barbastelle
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Barbastella barbastellus",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+
+
+  
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> barba
+  
+```
+
+
+```{r, results=FALSE, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle_sample_temp/tab_reconstitution_barbastelle_lnorm.csv")
+
+
+tab_echantillonnage_temp_barbastelle %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> barba2
+
+
+tab_echantillonnage_temp_barbastelle %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> barba_mean_var
+
+
+tab_echantillonnage_temp_barbastelle %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> barba_mean_var_annee
+
+
+tab_echantillonnage_temp_barbastelle   %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE),
+            sd=sd(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         mean_sd=mean(sd),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var, mean_sd) -> barba_mean_var_annee2 
+
+```
+
+
+
+
+## Murin de beschtein
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> beschstein
+  
+```
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_beschstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein_sample_temp/tab_reconstitution_bechstein_lnorm.csv")
+
+
+tab_echantillonnage_temp_beschstein %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=1) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> beschstein2
+
+
+tab_echantillonnage_temp_beschstein %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> beschstein_mean_var
+
+
+tab_echantillonnage_temp_beschstein %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> beschstein_mean_var_annee
+  
+```
+
+
+## Murin de daubenton
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> daubenton
+  
+```
+
+
+```{r, results=FALSE, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton_sample_temp/tab_reconstitution_daubenton_lnorm.csv")
+
+
+tab_echantillonnage_temp_daubenton %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=1) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> daubenton2
+
+
+tab_echantillonnage_temp_daubenton %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> daubenton_mean_var
+
+tab_echantillonnage_temp_daubenton %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> daubenton_mean_var_annee
+  
+```
+
+
+## Murin à oreilles échancrées
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> echancrees
+  
+```
+
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees_sample_temp/tab_reconstitution_echancrees_lnorm.csv")
+
+
+tab_echantillonnage_temp_echancrees %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=5) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> echancrees2
+
+
+tab_echantillonnage_temp_echancrees %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> echancrees_mean_var
+
+tab_echantillonnage_temp_echancrees %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> echancrees_mean_var_annee
+  
+  
+```
+
+## Grand murin
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> grand_murin
+  
+```
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_grand_murin_sample_temp/tab_reconstitution_grand_murin_lnorm.csv")
+
+
+tab_echantillonnage_temp_grand_murin %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=10) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> grand_murin2
+
+
+tab_echantillonnage_temp_grand_murin  %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> grand_murin_mean_var
+
+
+tab_echantillonnage_temp_grand_murin  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> grand_murin_mean_var_annee
+
+
+tab_echantillonnage_temp_grand_murin  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE),
+            sd=sd(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         mean_sd=mean(sd),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var, mean_sd) -> grand_murin_mean_var_annee2  
+  
+  
+
+  
+  
+```
+
+## Murin de Natterer
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> natterer
+  
+```
+
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer_sample_temp/tab_reconstitution_natterer_lnorm.csv")
+
+
+tab_echantillonnage_temp_natterer %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> natterer2
+
+
+tab_echantillonnage_temp_natterer  %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> natterer_mean_var
+
+
+tab_echantillonnage_temp_natterer  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> natterer_mean_var_annee
+  
+```
+
+## Grand rhinolophe
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon) -> grand_rhino
+  
+```
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino_sample_temp/tab_reconstitution_grand_rhino_lnorm.csv")
+
+
+tab_echantillonnage_temp_grand_rhino %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=10) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> grand_rhino2
+
+
+tab_echantillonnage_temp_grand_rhino  %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> grand_rhino_mean_var
+
+
+tab_echantillonnage_temp_grand_rhino  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> grand_rhino_mean_var_annee
+  
+```
+
+## Petit rhinolophe
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon)  -> petit_rhino
+  
+```
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino_sample_temp/tab_reconstitution_petit_rhino_lnorm.csv")
+
+
+tab_echantillonnage_temp_petit_rhino %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=10) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> petit_rhino2
+
+
+tab_echantillonnage_temp_petit_rhino  %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> petit_rhino_mean_var
+
+
+tab_echantillonnage_temp_petit_rhino  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> petit_rhino_mean_var_annee
+  
+```
+
+
+
+## Complexe murins
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_100_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_100_samp7
+
+summary_samp8<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_samp8.csv")
+
+summary_samp8 %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="samp08",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp8
+
+summary_samp9<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_samp9.csv")
+
+summary_samp9 %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="samp09",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp9
+
+summary_samp10<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/summary_samp10.csv")
+
+summary_samp10 %>%
+  as.data.frame() %>%
+  mutate(taxon="complexe Murins",
+         nom_tirage="samp10",
+         tirage="1 sur 3") %>%
+  slice(2) -> SEL_100_samp10
+
+
+########### on compile tout
+
+SEL_100_complet %>%
+  bind_rows(SEL_100_samp6, SEL_100_samp7, SEL_100_samp8, SEL_100_samp9, SEL_100_samp10) -> SEL_100_temp_sample
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+SEL_100_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle(SEL_100_temp_sample$taxon)  -> complexe_murins
+  
+```
+
+
+```{r, fig.width=5, fig.height=3}
+
+########### on charge ici le tableau de données (sites, années)
+
+tab_echantillonnage_temp_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_complexe_murins_sample_temp/tab_reconstitution_complexe_murins_lnorm.csv")
+
+
+tab_echantillonnage_temp_complexe_murins %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=comptage), size=1, fill="forestgreen", alpha=.9, width=10) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("fréquence") +
+  xlab("abondance") +
+  ggtitle(SEL_100_temp_sample$taxon) -> complexe_murins2
+
+
+tab_echantillonnage_temp_complexe_murins  %>%
+  filter(annee<2020) %>%
+  group_by(annee) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> complexe_murins_mean_var
+
+
+tab_echantillonnage_temp_complexe_murins  %>%
+  filter(annee<2020) %>%
+  group_by(CD_SITE) %>%
+  summarise(var=var(comptage, na.rm=TRUE)) %>%
+  mutate(mean_var=mean(var),
+         espece=(SEL_100_temp_sample$taxon[1])) %>%
+  slice(1) %>%
+  select(espece, mean_var) -> complexe_murins_mean_var_annee
+  
+```
+
+
+# Graphes et interprétations
+
+## Taux de croissance estimés selon les modalités d'échantillonnage temporel 
+
+On enregistre de fortes différences entre les espèces en termes de précision et de biais sur le taux de croissance lambda. Nous avons classé les espèces selon la précision des lambda obtenue : Au début les espèces avec mauvaise précision, à la fin les espèces dont la précision est très bonne. 
+
+__Graphes A,B__ : passer à une année sur deux diminue la précision, et gros biais selon quelle année on sélectionne pour le A.  
+__Graphe C__ :  ok si une année sur deux, forte imprécision une année sur trois pour un des tirages (mais pas trop biaisé).  
+__Graphe D__ :  précis une année sur deux (mais un peu biaisé), forte imprécision une année sur trois.  
+__Graphe E__ : Forts biais selon les tirages (même une année sur deux), précision reste bonne.  
+__Graphes F, G__ : On reste précis et pas trop biaisés une année sur deux (F un peu biaisé), biaisé pour un tirage d'une année sur trois. 
+__Graphes H, I__ : On reste précis et pas trop biaisés, même avec une année sur trois. 
+
+
+```{r results = FALSE,  fig.width=10, fig.height=10}
+plot_grid(barba, beschstein, daubenton, complexe_murins, natterer, grand_murin, petit_rhino, grand_rhino, echancrees,  labels=c("A", "B", "C", "D", "E", "F", "G", "H", "I"), ncol = 3, nrow = 3)
+```
+
+Plusieurs hypothèses pour expliquer une faible précision pour certaines espèces : De fortes variances moyennes de comptages entre sites, des abondances trop faibles, et/ou des variations importantes d'abondance sur les gros sites.  
+
+## Variance moyenne inter-sites 
+
+On voit que les espèces à très forte variance ne sont pas celles pour lesquelles on obtient une faible précision ou biais (excepté petit Rhinolophe qui est assez biaisé selon les tirages). 
+
+
+```{r results = FALSE,  fig.width=5, fig.height=5}
+barba_mean_var %>%
+  bind_rows(beschstein_mean_var, daubenton_mean_var, natterer_mean_var, petit_rhino_mean_var,  grand_murin_mean_var, grand_rhino_mean_var, echancrees_mean_var) -> var_especes
+
+
+var_especes %>%
+  ggplot()  +
+  theme_bw() +
+  geom_bar(aes(x=espece, y=mean_var), stat = "identity", size=0.5, fill="orange", alpha=.9, width=0.8) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("variance moyenne inter-site") +
+  xlab("espèce")            
+            
+```
+
+
+
+## Fréquence des comptages "réels" sur les 100 sites sélectionnés pour l'analyse 
+
+
+Les espèces avec faible précision de lambda sont celles dont les comptages dépassent rarement 10-20 individus par site (A, B notamment). Les espèces avec précision élevée de lambda sont celles pour lesquelles on a plein de comptages de quelques centaines d’individus (F à H).    
+
+```{r results = FALSE,  fig.width=10, fig.height=10}
+plot_grid(barba2, beschstein2, daubenton2, natterer2, petit_rhino2,  grand_murin2, grand_rhino2, echancrees2,  labels=c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 3, nrow = 3)
+```
+
+
+
+## Comptages obtenus sur les plus gros sites pour les espèces à forte variance taux de croissance
+
+Les espèces à faible précision de lambda correspondent à celles pour lesquelles on enregistre de fortes variations d'abondance sur les plus gros sites (et qui ont par ailleurs des effectifs assez faibles) : Notamment barbastelle et Murin de Beschstein.
+
+### Barbastelle
+
+Sites à plus de 10 individus en moyenne sur la période :
+
+```{r, fig.width=6, fig.height=6}
+
+tab_echantillonnage_temp_barbastelle   %>%
+  filter(annee<2020 & mean>10) %>%
+  group_by(CD_SITE, annee) %>%
+  summarise(sum=sum(comptage))  -> barba_gros_sites
+
+barba_gros_sites %>%
+  ggplot()  +
+  theme_bw() +
+  facet_wrap(~CD_SITE) +
+  geom_bar(aes(x=annee, y=sum), stat='identity', size=1, fill="forestgreen", alpha=.9, width=0.8) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=9), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("comptage") +
+  xlab("année")  
+  
+```
+
+Note : `r nrow(barba_gros_sites%>%filter(sum==0))` valeurs à 0 et `r nrow(barba_gros_sites%>%filter(is.na(sum)))` NA. 
+
+
+### Murin de Beschstein
+
+Sites à plus de 2,5 individus en moyenne sur la période :
+
+```{r, fig.width=6, fig.height=5}
+
+tab_echantillonnage_temp_beschstein   %>%
+  filter(annee<2020 & mean>2.5) %>%
+  group_by(CD_SITE, annee) %>%
+  summarise(sum=sum(comptage)) -> beschstein_gros_sites
+
+beschstein_gros_sites %>%
+  ggplot()  +
+  theme_bw() +
+  facet_wrap(~CD_SITE) +
+  geom_bar(aes(x=annee, y=sum), stat='identity', size=1, fill="forestgreen", alpha=.9, width=0.8) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=9), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("comptage") +
+  xlab("année")  
+  
+```
+
+Note : `r nrow(beschstein_gros_sites%>%filter(sum==0))` valeurs à 0 et `r nrow(beschstein_gros_sites%>%filter(is.na(sum)))` NA. 
+
+
+### Murin de Daubenton 
+
+Sites à plus de 15 individus en moyenne sur la période :
+
+```{r, fig.width=6, fig.height=6}
+
+tab_echantillonnage_temp_daubenton   %>%
+  filter(annee<2020 & mean>15) %>%
+  group_by(CD_SITE, annee) %>%
+  summarise(sum=sum(comptage)) -> daubenton_gros_sites
+
+daubenton_gros_sites %>%
+  ggplot()  +
+  theme_bw() +
+  facet_wrap(~CD_SITE) +
+  geom_bar(aes(x=annee, y=sum), stat='identity', size=1, fill="forestgreen", alpha=.9, width=0.8) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=9), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("comptage") +
+  xlab("année")  
+  
+```
+
+Note : `r nrow(daubenton_gros_sites%>%filter(sum==0))` valeurs à 0 et `r nrow(daubenton_gros_sites%>%filter(is.na(sum)))` NA. 
+
+
+
+
+Ici, pour comparaison, on prend une espèce dont la précision de lambda est très élevée :
+
+#### Murin à oreilles échancrées
+
+Sites à plus de 100 individus en moyenne sur la période :
+
+```{r, fig.width=6, fig.height=5}
+
+tab_echantillonnage_temp_echancrees   %>%
+  filter(annee<2020 & mean>100) %>%
+  group_by(CD_SITE, annee) %>%
+  summarise(sum=sum(comptage)) -> echancrees_gros_sites
+
+echancrees_gros_sites %>%
+  ggplot()  +
+  theme_bw() +
+  facet_wrap(~CD_SITE) +
+  geom_bar(aes(x=annee, y=sum), stat='identity', size=1, fill="forestgreen", alpha=.9, width=0.8) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=9), 
+        axis.text.y = element_text(size=11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  ylab("comptage") +
+  xlab("année")  
+  
+```
+
+Note : `r nrow(echancrees_gros_sites%>%filter(sum==0))` valeurs à 0 et `r nrow(echancrees_gros_sites%>%filter(is.na(sum)))` NA. 
+

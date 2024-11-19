@@ -1,0 +1,1368 @@
+---
+title: "Echantillonnage spatial"
+author: "Thibaut Couturier"
+output:
+  html_document: null
+  toc: yes
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, options(digits=5))
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+Analyse en date du 
+`r Sys.Date()`
+
+# Importation, préparation des données
+
+```{r results = FALSE}
+data <- read_csv2("../data/BBF20220117_export_chiros_hiver_CEFE+TC.csv")
+
+data %>%
+  mutate(CD_SITE=as.factor(CD_SITE),
+         COMMUNE=as.factor(COMMUNE),
+         LIEU_DIT=as.factor(LIEU_DIT),
+         LOCALISATION=as.factor(LOCALISATION),
+         PRECISION=as.factor(PRECISION),
+         TYPE=as.factor(TYPE),
+         CD_RELEVE=as.factor(CD_RELEVE),
+         DATE_OBS=lubridate::dmy(DATE_OBS),
+         OBSERVATEUR=as.factor(OBSERVATEUR),
+         METHODE=as.factor(METHODE),
+         SAISON=as.factor(SAISON),
+         TAXON=as.factor(TAXON),
+         STATUT=as.factor(STATUT),
+         ans=str_sub(SAISON,7,10)) -> data 
+```
+
+
+# Préparation données
+
+Pour chaque espèce, nous avons conservé les données collectées entre de 2005 à 2019 uniquement, sur les sites où au moins deux relevés au cours de cette période ont été réalisés, et sur lesquels au moins un individu a été contacté.    
+
+```{r eval = FALSE} 
+
+# tableau données
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+espece<-"Myotis myotis (Borkhausen, 1797)"
+espece<-"Rhinolophus ferrumequinum (Schreber, 1774)"
+espece<-"Barbastella barbastellus (Schreber, 1774)"
+espece<-"Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)"
+espece<-"Myotis nattereri (Kuhl, 1817)"
+espece<-"Myotis bechsteinii (Kuhl, 1817)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_petit_rhinolophe
+
+
+```
+
+
+```{r eval = FALSE}  
+
+
+########################  
+## FILTRES : on prend sur 15 ans (2005-2019), on retient les sites avec au moins deux relevés, et au moins un individu contacté. 
+#########################
+
+data_petit_rhinolophe %>%
+  ungroup() %>%
+  select(25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<14 & mean!=0) -> data_petit_rhinolophe_filtre
+```
+
+
+# Echantillonnage colonies/années
+
+Plusieurs modalités de tirage sont testées (voir résultats plus bas).  
+
+
+```{r eval = FALSE}
+ 
+
+########## Tests : OLD
+
+# sélection de 100 sites avec au moins 3 années de comptages
+
+na_limit<-3 # nb de données échantillonnées minimales sur la période
+nsel<-100 # nb de sites sélectionnés aléatoirement
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(-1) %>%
+  filter(rowSums(!is.na(.)) >= na_limit) %>%
+  sample_n(nsel) %>%
+  filter_all(any_vars(! is.na(.))) -> data_sel1
+
+
+
+# sélection des 15 dernières années, avec un échantillonnage des colonies pondéré par leur taille max obtenue sur 15ans
+
+na_limit<-15 # nb de données échantillonnées minimales sur la période
+nsel<-100 # nb de sites sélectionnés aléatoirement
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(26:40) %>%
+  filter(rowSums(is.na(.)) < na_limit) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2006':'2020'), na.rm=TRUE),
+         poids=case_when(max==0 ~ 0, 
+                         max>=0 & max<5 ~ 1,
+                         max>=5 & max<20 ~ 2,
+                         max>=20 & max<100 ~ 3,
+                         max>=100 ~ 4)) %>%
+  ungroup()  %>%
+  sample_n(size=nsel, weight=poids) #-> sel100
+
+
+
+# sélection de 2005 à 2019 (15 ans), avec un échantillonnage des colonies avec un nombre moyen de NA (entre 5 et 10), pondéré par leur taille max obtenue sur 15ans
+
+na_limit<-15 # nb de données échantillonnées minimales sur la période
+nsel<-50 # nb de sites sélectionnés aléatoirement
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(25:39) %>%
+  filter(rowSums(is.na(.)) < na_limit) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2005':'2019'), na.rm=TRUE),
+         poids=case_when(max==0 ~ 0, 
+                         max>=0 & max<5 ~ 1,
+                         max>=5 & max<20 ~ 2,
+                         max>=20 & max<100 ~ 3,
+                         max>=100 ~ 4),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup()  %>%
+  filter(n_na>=5 & n_na<=10) %>%
+  sample_n(size=nsel, weight=poids) #-> sel50_1
+
+
+
+# sélection de 2005 à 2019 (15 ans), avec un échantillonnage des colonies avec un nombre de NA inférieur à 5, pondéré par leur taille max obtenue sur 15ans
+
+na_limit<-15 # nb de données échantillonnées minimales sur la période
+nsel<-50 # nb de sites sélectionnés aléatoirement
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(25:39) %>%
+  filter(rowSums(is.na(.)) < na_limit) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2005':'2019'), na.rm=TRUE),
+         poids=case_when(max==0 ~ 0, 
+                         max>=0 & max<5 ~ 1,
+                         max>=5 & max<20 ~ 2,
+                         max>=20 & max<100 ~ 3,
+                         max>=100 ~ 4),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup()  %>%
+  filter(n_na<5) -> essai #%>%
+  sample_n(size=nsel, weight=poids) #-> sel50_1
+```
+  
+
+Tirages des colonies
+```{r eval = FALSE} 
+# SELECTION 1 : 50 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+
+data_petit_rhino_filtre %>%
+  sample_n(size=50, weight=mean_log) -> SEL_050_P
+
+# SELECTION 2 : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+
+data_petit_rhino_filtre %>%
+  sample_n(size=100, weight=mean_log) -> SEL_100_P
+
+# SELECTION 3 : 150 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+
+data_petit_rhino_filtre %>%
+  sample_n(size=150, weight=mean_log) -> SEL_150_P
+
+# SELECTION 4 : 50 colonies, échantillonnage des colonies avec bp de relevés : au moins la moitié du temps avec des relevés, soit 8 ans. Tirage aléatoire
+
+data_petit_rhino_filtre %>%
+  filter(n_na<=7) %>%
+  sample_n(size=50) -> SEL_50_7NA
+
+# SELECTION 5 : 96 colonies (le max), échantillonnage des colonies avec bp de relevés : au moins la moitié du temps avec des relevés, soit 8 ans. Toutes conservées
+
+data_petit_rhino_filtre %>%
+  filter(n_na<=7)  -> SEL_96_7NA
+
+# SELECTION 6 : 50 colonies, échantillonnage des colonies avec peu de relevés : entre 2 et 4 sur 15 ans. Tirage aléatoire
+
+data_petit_rhino_filtre %>%
+  filter(n_na>=11) %>%
+  sample_n(size=50)  -> SEL_50_SUP11NA
+
+# SELECTION 7 : 96 colonies, échantillonnage des colonies avec peu de relevés : entre 2 et 4 sur 15 ans. Toutes conservées
+
+data_petit_rhino_filtre %>%
+  filter(n_na>=11)   -> SEL_100_SUP11NA
+  
+  
+  
+```
+
+
+# Modèle jags
+
+Ce modèle est réutilisé pour l'ensemble des jeux de données utilisés pour tester des scénarios de plans d'échantillonnage spatiaux. Ces modèles sont lancés sur un cluster puis stockés dans un dossier. 
+
+```{r eval = FALSE}
+#rm(list = ls(all.names = TRUE)) # nettoyer l'environnemnt
+options(digits = 3, scipen = 999)
+
+
+# loading the required packages
+library(jagsUI)
+library(magrittr)
+
+# Comptages annuels
+data_murin_natterer_filtre%>%
+select(c(1:15)) -> group_counts
+
+y <- group_counts
+
+# Define max.N0 for the model
+max.N0 <- round(sum(y[,1], na.rm = TRUE)*1.5)
+
+# Ajouter des NA's pour les projections demo
+ny0 <- ncol(y)
+y[, (ny0+1:30)] <- NA
+colnames(y)[ny0+(1:30)] <- paste0("X", as.numeric(gsub("X", "", names(y)[ny0])) + (1:30))
+
+
+# Fit the data model #####
+# Data bundle
+jags.data <- list(y=y, I = nrow(y), T=ncol(y), 
+                  max.N0 = max.N0)
+str(jags.data)
+
+
+
+# Write JAGS model file ####
+cat(file = "model_LAMBDA.txt", "
+  model{
+    
+    ## National Scale
+    # Prior on lambda (population growth rate)
+    mu.lam_0 ~ dunif(0, 10)
+
+    # Prior on N0
+    N[1] ~ dunif(0, max.N0)
+
+    # Process model over time (population growth)
+    for (t in 1:(T-1)){
+      lambda[t] <- mu.lam_0
+      N[t+1] <- N[t] * lambda[t]
+    } # t
+    
+    
+    ## Colony-groups Scale
+    # Priors
+    for(i in 1:I){
+      b0[i] ~ dunif(0,100)
+      b1[i] ~ dunif(0,100)
+    } # i
+      
+    for(t in 1:T){
+      for(i in 1:I){
+        w[i,t] <- b0[i] + b1[i]*(t-1)
+        gamma[i,t] <- w[i,t]/sum(w[1:I,t])
+      } # i
+    } # t
+    
+    # Process model : repartition of N among colony-groups 
+    for(t in 1:T){
+      NN[t] <- round(N[t])
+      n[1:I,t] <- gamma[1:I,t]*NN[t]
+      Npair[1:I,t] <- n[1:I,t]
+    } # t
+    
+    ## Observation process
+	# Prior
+	sig.y ~ dunif(0.1, 500)
+	tau.y <- pow(sig.y, -2)
+
+	# Modele
+
+    for(i in 1:I){
+      for(t in 1:T){
+	y[i,t] ~ dnorm(n[i,t], tau.y)
+      } # t
+    } # i
+    
+  } # model
+") # cat
+
+# Initial values
+inits <- function(){
+  list(
+    N = round(sum(y[,1], na.rm = TRUE)*(1+runif(1,0,0.5))),
+    n = round(y)
+  )
+}
+inits()
+
+# Parameters monitored
+parameters <- c("mu.lam_0", "b0", "b1", "N", "Npair", "gamma")
+
+# MCMC settings
+nc <- 3
+ni <- 20000
+nb <- 1000
+na <- 5000
+nt <- 5
+
+# Call JAGS
+system.time(
+  out_tout_filtre_murin_natterer <- jags(data = jags.data, inits = NULL, 
+              parameters.to.save = parameters, 
+              model.file = "model_LAMBDA.txt", 
+              n.chains = nc, n.iter = ni, 
+              n.burnin = nb, n.adapt = na,
+              n.thin = nt, DIC = FALSE, 
+              parallel = FALSE
+  ) # close jags fn
+) # clos time fn
+
+save.image("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/tout_filtre.RData")
+
+```
+
+
+```{r eval = FALSE}
+# tests Outputs
+# traceplot(out, parameters = c("mu.lam_0", "b0", "b1"))
+out$summary[1:5, c(1,3,7,8:9)] %>% round(.,3) 
+# out$summary[, c(1,3,7,8:9)] %>% round(.,3) %>% tail
+dim(out$summary)
+out$summary[, c(1,3,7,8:9)] %>% round(.,3) %>% head(., 30)
+out$summary[, c(1,3,7,8:9)] %>% round(.,3) %>% tail(., 11)
+
+
+# mu_lam_0
+out$summary[1, c(1,3,7,8:9)] %>% round(.,3) 
+
+# b0
+out$summary[2:101, c(1,3,7,8:9)] %>% round(.,3) 
+
+# b1
+out$summary[102:201, c(1,3,7,8:9)] %>% round(.,3)
+
+# N
+out$summary[202:269, c(1,3,7,8:9)] %>% round(.,3)
+
+# Npair annee 1...
+out$summary[270:370, c(1,3,7,8:9)] %>% round(.,3)
+
+
+# export des mu.lam_0 sous un meme tableau
+out_SEL_050_P$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=1,
+         ncolonies=50,
+         cible='toutes',
+         selection='aléatoire et pondéré') %>%
+  slice(1) -> SEL_050_P_sum
+
+out_SEL_100_P$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=2,
+         ncolonies=100,
+          cible='toutes',
+         selection='aléatoire et pondéré') %>%
+  slice(1) -> SEL_100_P_sum
+
+out_SEL_150_P$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=3,
+         ncolonies=150,
+         cible='toutes',
+         selection='aléatoire et pondéré') %>%
+  slice(1) -> SEL_150_P_sum
+
+
+out_SEL_7NA$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=4,
+         ncolonies=50,
+         cible='>7 ans suivi',
+         selection='aléatoire') %>%
+  slice(1) -> SEL_50_7NA_sum
+
+out_SEL_96_7NA$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=5,
+         ncolonies=96,
+         cible='>7 ans suivi',
+         selection='toutes') %>%
+  slice(1) -> SEL_96_7NA_sum
+
+out_SEL_50_SUP11NA$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=6,
+         ncolonies=50,
+         cible='<5 ans suivi',
+         selection='aléatoire') %>%
+  slice(1) -> SEL_50_SUP11NA_sum
+
+out_SEL_100_SUP11NA$summary %>%
+  as.data.frame() %>%
+  mutate(no_selection=7,
+         ncolonies=96,
+         cible='<5 ans suivi',
+         selection='toutes') %>%
+  slice(1) -> SEL_100_SUP11NA_sum
+
+
+SEL_050_P_sum %>%
+  bind_rows(SEL_100_P_sum, 
+            SEL_150_P_sum,
+            SEL_50_7NA_sum,
+            SEL_96_7NA_sum,
+            SEL_50_SUP11NA_sum,
+            SEL_100_SUP11NA_sum) -> recap_mu.lam_0
+
+write_csv2(recap_mu.lam_0, '../outputs/recap_mu.lam_0.csv')
+
+```
+
+
+# Récupération des sorties de modèles et graphes
+
+Nous avons testé plusieurs modalités de tirage : 50 sites ou 100 sites (lorsque suffisamment de données dans le second cas). Ce tirage était soit aléatoire, soit pondéré par la taille du site (en log). Pour les tirages de 50 sites, on testait également des jeux de données composés des sites régulièrement suivis (i.e. les sites avec plus de 8 relevés sur 15 ans), et d'autres avec sélection des sites peu suivis (i.e. moins de 6 relevés). Nous avons réalisé 10 tirages indépendants pour chaque modalité.  
+A l'exception du Petit rhinolophe, les abscisses ont été fixés entre espèces pour faciliter la comparaison entre elles. Certaines estimations dépassent néanmoins ce seuil fixés (visible par ex. Petit rhinolophe avec 100 colonies).
+Notons également que les résultats pour les sites très peu suivis donnent des estimations très hétérogènes ; Pour plus de lisibilité, les graphes intégrant cette modalité ont été reportés dans une deuxième partie.  
+
+
+## Tous les sites : comparaison entre espèces 
+
+```{r results = FALSE, fig.width=6.5, fig.height=3.5}
+SEL_tout_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/recap_mu.lam_tout.csv")
+SEL_tout_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/recap_mu.lam_tout.csv")
+SEL_tout_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/recap_mu.lam_tout.csv")
+SEL_tout_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/recap_mu.lam_tout.csv")
+SEL_tout_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/recap_mu.lam_tout.csv")
+SEL_tout_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/recap_mu.lam_tout.csv")
+SEL_tout_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/recap_mu.lam_tout.csv")
+SEL_tout_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/recap_mu.lam_tout.csv")
+SEL_tout_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_tout_complexe_murins/recap_mu.lam_tout.csv")
+
+bind_rows(SEL_tout_petit_rhino,
+          SEL_tout_daubenton,
+          SEL_tout_barbastelle,
+          SEL_tout_bechstein,
+          SEL_tout_echancrees,
+          SEL_tout_grand_murin,
+          SEL_tout_natterer,
+          SEL_tout_complexe_murins,
+          SEL_tout_grand_rhino) -> SEL_tout
+
+SEL_tout %>%
+  ggplot()  +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=taxon, y=mean), size=2) +
+  geom_errorbar(aes(x=taxon, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_text(size=11),
+        legend.position = "none") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+
+
+```
+
+## Sans résultats sites suivis moins de 6 ans
+
+
+```{r eval = FALSE}
+
+#On charge les modèles avec toutes les données, puis création de fichier de sortie (pour charger plus rapidement ensuite) ; pas à relancer.  
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/tout_filtre.RData")
+out_tout_filtre$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Rhinolophus hipposideros",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=229, pas de filtre') %>%
+  slice(1) -> tout_espece1
+write_csv2(tout_espece1, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/recap_mu.lam_tout.csv")
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/tout_filtre.RData")
+out_tout_filtre$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Myotis daubentonii",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=173, pas de filtre') %>%
+  slice(1) -> tout_espece2
+write_csv2(tout_espece2, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/recap_mu.lam_tout.csv")
+
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/tout_filtre.RData")
+out_tout_filtre$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Myotis myotis",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=188, pas de filtre') %>%
+  slice(1) -> tout_grand_murin
+write_csv2(tout_grand_murin, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/recap_mu.lam_tout.csv")
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/tout_filtre.RData")
+out_tout_filtre_grand_rhino$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Rhinolophus ferrumequinum",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=161, pas de filtre') %>%
+  slice(1) -> tout_grand_rhino
+write_csv2(tout_grand_rhino, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/recap_mu.lam_tout.csv")
+
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/tout_filtre.RData")
+out_tout_filtre_barbastelle$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Barbastella barbastellus",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=100, pas de filtre') %>%
+  slice(1) -> tout_barbastelle
+write_csv2(tout_barbastelle, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/recap_mu.lam_tout.csv")
+
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/tout_filtre.RData")
+out_tout_filtre_murin_echancrees$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Myotis emarginatus",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=108, pas de filtre') %>%
+  slice(1) -> tout_echancrees
+write_csv2(tout_echancrees, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/recap_mu.lam_tout.csv")
+
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/tout_filtre.RData")
+out_tout_filtre_murin_bechstein$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Myotis bechsteinii",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=98, pas de filtre') %>%
+  slice(1) -> tout_bechstein
+write_csv2(tout_bechstein, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/recap_mu.lam_tout.csv")
+
+load("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/tout_filtre.RData")
+out_tout_filtre_murin_natterer$summary %>%
+  as.data.frame() %>%
+  mutate(ncolonies=nrow(y),
+         taxon="Myotis nattereri",
+         tirage=1,
+         selection="tout",
+         filtre='1- n=153, pas de filtre') %>%
+  slice(1) -> tout_natterer
+write_csv2(tout_natterer, "C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/recap_mu.lam_tout.csv")
+
+```
+
+
+
+
+### Petit rhinolophe
+```{r results = FALSE}
+
+#Petit rhino
+SEL_tout_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/recap_mu.lam_tout.csv")
+
+SEL_050_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_050_petit_rhino/recap_mu.lam_SEL_050.csv")
+SEL_050_petit_rhino %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_petit_rhino 
+
+SEL_050_7NA_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_050_7NA_petit_rhino/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_petit_rhino %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_petit_rhino
+
+SEL_050_SUP9NA_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_050_SUP9NA_petit_rhino/recap_mu.lam_SEL_50_SUP9NA.csv")
+SEL_050_SUP9NA_petit_rhino %>%
+  mutate(filtre='6- n=50, inf6ans',
+         selection="aléatoire") -> SEL_050_SUP9NA_petit_rhino
+
+SEL_100_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_petit_rhino/recap_mu.lam_SEL_100.csv")
+SEL_100_petit_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_petit_rhino
+
+SEL_100_alea_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_100_alea_petit_rhino/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_petit_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_petit_rhino_alea
+
+SEL_100_P_na_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_petit_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_petit_rhino_P_na
+
+SEL_070_petit_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_070_petit_rhino/recap_mu.lam_SEL_070.csv")
+SEL_070_petit_rhino %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_070_petit_rhino
+
+SEL_tout_petit_rhino %>%
+  bind_rows(SEL_100_petit_rhino,
+            SEL_050_petit_rhino,
+            SEL_050_7NA_petit_rhino,
+            SEL_050_SUP9NA_petit_rhino,
+            SEL_100_petit_rhino_alea,
+            SEL_100_petit_rhino_P_na,
+            SEL_070_petit_rhino) %>%
+  relocate(selection, .after = filtre)-> petit_rhino
+```
+
+Attention, fortes croissances estimées, l'échelle des abscisses n'est pas la même que pour les autres espèces.  
+
+```{r, fig.width=10, fig.height=8}
+petit_rhino %>%
+  filter(filtre!='6- n=50, inf6ans') %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+```
+
+### Murin de Daubenton
+```{r results = FALSE }
+SEL_tout_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/recap_mu.lam_tout.csv")
+
+SEL_050_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_050_daubenton/recap_mu.lam_SEL_050.csv")
+SEL_050_daubenton %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_daubenton 
+
+SEL_050_7NA_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_050_7NA_daubenton/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_daubenton %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_daubenton
+
+SEL_050_SUP9NA_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_050_SUP9NA_daubenton/recap_mu.lam_SEL_50_SUP9NA.csv")
+SEL_050_SUP9NA_daubenton %>%
+  mutate(filtre='6- n=50, inf6ans',
+         selection="aléatoire") -> SEL_050_SUP9NA_daubenton
+
+SEL_100_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_daubenton/recap_mu.lam_SEL_100.csv")
+SEL_100_daubenton %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_daubenton
+
+SEL_100_alea_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_100_alea_daubenton/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_daubenton %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_daubenton_alea
+
+SEL_100_P_na_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_daubenton %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_daubenton_P_na
+
+SEL_70_P_weight_daubenton<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_070_daubenton/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_daubenton %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_daubenton
+
+
+SEL_tout_daubenton %>%
+  bind_rows(SEL_100_daubenton,
+            SEL_050_daubenton,
+            SEL_050_7NA_daubenton,
+            SEL_050_SUP9NA_daubenton,
+            SEL_100_daubenton_alea,
+            SEL_100_daubenton_P_na,
+            SEL_70_daubenton) %>%
+  relocate(selection, .after = filtre)-> daubenton
+```
+
+
+```{r, fig.width=10, fig.height=8}
+daubenton %>%
+  filter(filtre!='6- n=50, inf6ans') %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+```
+
+
+
+### Barbastelle
+```{r results = FALSE}
+
+
+SEL_tout_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/recap_mu.lam_tout.csv")
+
+SEL_050_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_050_barbastelle/recap_mu.lam_SEL_050.csv")
+SEL_050_barbastelle %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_barbastelle 
+
+SEL_050_7NA_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_050_7NA_barbastelle/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_barbastelle %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_barbastelle
+
+SEL_70_P_weight_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_070_weight_barbastelle/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_barbastelle %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_barbastelle
+
+#SEL_050_SUP9NA_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_050_SUP9NA_barbastelle/recap_mu.lam_SEL_50_SUP9NA.csv")
+#SEL_050_SUP9NA_barbastelle %>%
+#  mutate(filtre='5- n=50, inf6ans',
+#         selection="aléatoire") -> SEL_050_SUP9NA_barbastelle
+
+#SEL_100_barbastelle<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/barbastella_barbastellus/SEL_100_barbastelle/recap_mu.lam_SEL_100.csv")
+#SEL_100_barbastelle %>%
+#  mutate(filtre='2- n=100, pas de filtre',
+#         selection="pondération taille") -> SEL_100_barbastelle
+
+
+SEL_tout_barbastelle %>%
+  bind_rows(#SEL_100_barbastelle,
+            #SEL_050_SUP9NA_barbastelle,
+            SEL_050_barbastelle,
+            SEL_050_7NA_barbastelle,
+            SEL_70_barbastelle) %>%
+  relocate(selection, .after = filtre)-> barbastelle
+```
+
+```{r, fig.width=10, fig.height=6}
+barbastelle %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+
+
+### Murin de Bechsteinii
+```{r results = FALSE}
+
+
+SEL_tout_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/recap_mu.lam_tout.csv")
+
+SEL_050_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_050_bechstein/recap_mu.lam_SEL_050.csv")
+SEL_050_bechstein %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_bechstein 
+
+SEL_050_7NA_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_050_7NA_bechstein/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_bechstein %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_bechstein
+
+SEL_070_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_070_bechstein/recap_mu.lam_SEL_070.csv")
+SEL_070_bechstein %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_070_bechstein
+
+#SEL_050_SUP9NA_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_050_SUP9NA_bechstein/recap_mu.lam_SEL_50_SUP9NA.csv")
+#SEL_050_SUP9NA_bechstein %>%
+#  mutate(filtre='5- n=50, inf6ans',
+#         selection="aléatoire") -> SEL_050_SUP9NA_bechstein
+
+#SEL_100_bechstein<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_100_bechstein/recap_mu.lam_SEL_100.csv")
+#SEL_100_bechstein %>%
+#  mutate(filtre='2- n=100, pas de filtre',
+#         selection="pondération taille") -> SEL_100_bechstein
+
+
+SEL_tout_bechstein %>%
+  bind_rows(#SEL_100_bechstein,
+            #SEL_050_SUP9NA_bechstein,
+            SEL_050_bechstein,
+            SEL_050_7NA_bechstein,
+            SEL_070_bechstein) %>%
+  relocate(selection, .after = filtre)-> bechstein
+```
+
+```{r, fig.width=10, fig.height=6}
+bechstein %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+
+
+### Murin à oreilles échancrées
+```{r results = FALSE}
+
+
+SEL_tout_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/recap_mu.lam_tout.csv")
+
+SEL_050_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_050_echancrees/recap_mu.lam_SEL_050.csv")
+SEL_050_echancrees %>%
+  mutate(filtre='3- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_echancrees 
+
+SEL_050_7NA_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_050_7NA_echancrees/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_echancrees %>%
+  mutate(filtre='4- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_echancrees
+
+SEL_70_P_weight_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_070_echancrees/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_echancrees %>%
+  mutate(filtre='2- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_echancrees
+
+#SEL_050_SUP9NA_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_050_SUP9NA_echancrees/recap_mu.lam_SEL_50_SUP9NA.csv")
+#SEL_050_SUP9NA_echancrees %>%
+#  mutate(filtre='5- n=50, inf6ans',
+#         selection="aléatoire") -> SEL_050_SUP9NA_echancrees
+
+#SEL_100_echancrees<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_100_echancrees/recap_mu.lam_SEL_100.csv")
+#SEL_100_echancrees %>%
+#  mutate(filtre='2- n=100, pas de filtre',
+#         selection="pondération taille") -> SEL_100_echancrees
+
+
+SEL_tout_echancrees %>%
+  bind_rows(#SEL_100_echancrees,
+            #SEL_050_SUP9NA_echancrees,
+            SEL_050_echancrees,
+            SEL_050_7NA_echancrees,
+            SEL_70_echancrees) %>%
+  relocate(selection, .after = filtre)-> echancrees
+```
+
+```{r, fig.width=10, fig.height=6}
+echancrees %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+
+### Grand murin
+```{r results = FALSE}
+
+
+SEL_tout_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/recap_mu.lam_tout.csv")
+
+SEL_050_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_050_grand_murin/recap_mu.lam_SEL_050.csv")
+SEL_050_grand_murin %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_grand_murin 
+
+SEL_050_7NA_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_050_7NA_grand_murin/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_grand_murin %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_grand_murin
+
+SEL_050_SUP9NA_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_050_SUP9NA_grand_murin/recap_mu.lam_SEL_50_SUP9NA.csv")
+SEL_050_SUP9NA_grand_murin %>%
+  mutate(filtre='6- n=50, inf6ans',
+         selection="aléatoire") -> SEL_050_SUP9NA_grand_murin
+
+SEL_100_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_myotis_myotis/recap_mu.lam_SEL_100.csv")
+SEL_100_grand_murin %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_grand_murin
+
+SEL_100_alea_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_100_alea_myotis_myotis/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_grand_murin %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_grand_murin_alea
+
+SEL_100_P_na_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_grand_murin %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_grand_murin_P_na
+
+SEL_70_P_weight_grand_murin<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_070_grand_murin/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_grand_murin %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_grand_murin
+
+SEL_tout_grand_murin %>%
+  bind_rows(SEL_100_grand_murin,
+            SEL_050_grand_murin,
+            SEL_050_7NA_grand_murin,
+            SEL_050_SUP9NA_grand_murin,
+            SEL_100_grand_murin_alea,
+            SEL_100_grand_murin_P_na,
+            SEL_70_grand_murin) %>%
+  relocate(selection, .after = filtre)-> grand_murin
+```
+
+
+```{r, fig.width=10, fig.height=8}
+grand_murin %>%
+  filter(filtre!='6- n=50, inf6ans') %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+```
+
+
+### Murin de Natterer
+```{r results = FALSE}
+
+
+SEL_tout_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/recap_mu.lam_tout.csv")
+
+SEL_050_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_050_natterer/recap_mu.lam_SEL_050.csv")
+SEL_050_natterer %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_natterer 
+
+#SEL_050_7NA_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_050_7NA_natterer/recap_mu.lam_SEL_50_7NA.csv")
+#SEL_050_7NA_natterer %>%
+#  mutate(filtre='n=50, sup8ans',
+#         selection="aléatoire") -> SEL_050_7NA_natterer
+
+#SEL_050_SUP9NA_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_050_SUP9NA_natterer/recap_mu.lam_SEL_50_SUP9NA.csv")
+#SEL_050_SUP9NA_natterer %>%
+#  mutate(filtre='5- n=50, inf6ans',
+#         selection="aléatoire") -> SEL_050_SUP9NA_natterer
+
+SEL_100_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_natterer/recap_mu.lam_SEL_100.csv")
+SEL_100_natterer %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_natterer
+
+SEL_100_alea_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_100_alea_natterer/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_natterer %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_natterer_alea
+
+
+SEL_100_P_na_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_natterer %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_natterer_P_na
+
+
+SEL_070_natterer<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_070_natterer/recap_mu.lam_SEL_070.csv")
+SEL_070_natterer %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_070_natterer 
+
+
+
+SEL_tout_natterer %>%
+  bind_rows(#SEL_050_7NA_natterer,
+            #SEL_050_SUP9NA_natterer?
+            SEL_100_natterer,
+            SEL_050_natterer,
+            SEL_100_natterer_alea, 
+            SEL_100_natterer_P_na,
+            SEL_070_natterer) %>%
+  relocate(selection, .after = filtre)-> natterer
+```
+
+```{r, fig.width=10, fig.height=8}
+natterer %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+
+### Grand rhinolophe
+```{r results = FALSE}
+
+
+SEL_tout_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/recap_mu.lam_tout.csv")
+
+SEL_050_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_050_grand_rhino/recap_mu.lam_SEL_050.csv")
+SEL_050_grand_rhino %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_grand_rhino 
+
+SEL_050_7NA_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_050_7NA_grand_rhino/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_grand_rhino %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_grand_rhino
+
+SEL_050_SUP9NA_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_050_SUP9NA_grand_rhino/recap_mu.lam_SEL_50_SUP9NA.csv")
+SEL_050_SUP9NA_grand_rhino %>%
+  mutate(filtre='6- n=50, inf6ans',
+         selection="aléatoire") -> SEL_050_SUP9NA_grand_rhino
+
+SEL_100_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_grand_rhino/recap_mu.lam_SEL_100.csv")
+SEL_100_grand_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_grand_rhino
+
+SEL_100_alea_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_100_alea_grand_rhino/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_grand_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_grand_rhino_alea
+
+SEL_100_P_na_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_grand_rhino %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_grand_rhino_P_na
+
+SEL_70_P_weight_grand_rhino<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_070_grand_rhino/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_grand_rhino %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_grand_rhino
+
+
+SEL_tout_grand_rhino %>%
+  bind_rows(SEL_100_grand_rhino,
+            SEL_050_grand_rhino,
+            SEL_050_7NA_grand_rhino,
+            SEL_050_SUP9NA_grand_rhino,
+            SEL_100_grand_rhino_alea,
+            SEL_100_grand_rhino_P_na,
+            SEL_70_grand_rhino) %>%
+  relocate(selection, .after = filtre)-> grand_rhino
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+grand_rhino %>%
+  filter(filtre!='6- n=50, inf6ans') %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+```
+
+
+### Complexe murins
+```{r results = FALSE}
+
+
+SEL_tout_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_tout_complexe_murins/recap_mu.lam_tout.csv")
+
+SEL_050_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_050_complexe_murins/recap_mu.lam_SEL_050.csv")
+SEL_050_complexe_murins %>%
+  mutate(filtre='4- n=50, pas de filtre',
+         selection="pondération taille") -> SEL_050_complexe_murins 
+
+SEL_050_7NA_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_050_7NA_complexe_murins/recap_mu.lam_SEL_50_7NA.csv")
+SEL_050_7NA_complexe_murins %>%
+  mutate(filtre='5- n=50, sup8ans',
+         selection="aléatoire") -> SEL_050_7NA_complexe_murins
+
+SEL_050_SUP9NA_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_050_SUP9NA_complexe_murins/recap_mu.lam_SEL_50_SUP9NA.csv")
+SEL_050_SUP9NA_complexe_murins %>%
+  mutate(filtre='6- n=50, inf6ans',
+         selection="aléatoire") -> SEL_050_SUP9NA_complexe_murins
+
+SEL_100_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_weight_complexe_murins/recap_mu.lam_SEL_100_weight.csv")
+SEL_100_complexe_murins %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération taille") -> SEL_100_complexe_murins
+
+SEL_100_alea_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_alea_complexe_murins/recap_mu.lam_SEL_100_alea.csv")
+SEL_100_alea_complexe_murins %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="aléatoire") -> SEL_100_complexe_murins_alea
+
+SEL_100_P_na_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_100_na_complexe_murins/recap_mu.lam_SEL_100_na.csv")
+SEL_100_P_na_complexe_murins %>%
+  mutate(filtre='2- n=100, pas de filtre',
+         selection="pondération nb années") -> SEL_100_complexe_murins_P_na
+
+SEL_70_P_weight_complexe_murins<-read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_070_weight_complexe_murins/recap_mu.lam_SEL_070.csv")
+SEL_70_P_weight_complexe_murins %>%
+  mutate(filtre='3- n=70, pas de filtre',
+         selection="pondération taille") -> SEL_70_complexe_murins
+
+
+SEL_tout_complexe_murins %>%
+  bind_rows(SEL_100_complexe_murins,
+            SEL_050_complexe_murins,
+            SEL_050_7NA_complexe_murins,
+            SEL_050_SUP9NA_complexe_murins,
+            SEL_100_complexe_murins_alea,
+            SEL_100_complexe_murins_P_na,
+            SEL_70_complexe_murins) %>%
+  relocate(selection, .after = filtre)-> complexe_murins
+```
+
+
+
+```{r, fig.width=10, fig.height=8}
+complexe_murins %>%
+  filter(filtre!='6- n=50, inf6ans') %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.1)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+```
+
+
+
+## Avec résultats sites suivis moins de 6 ans
+
+
+### Petit rhinolophe
+```{r, fig.width=10, fig.height=6}
+petit_rhino %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+### Grand rhinolophe
+```{r, fig.width=10, fig.height=6}
+grand_rhino %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+### Grand murin
+```{r, fig.width=10, fig.height=6}
+grand_murin %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+### Murin de Daubenton
+```{r, fig.width=10, fig.height=6}
+daubenton %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+### Complexe Murins
+```{r, fig.width=10, fig.height=6}
+complexe_murins %>%
+  ggplot()  +
+  facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  #scale_y_continuous(limits=c(0.95, 1.3)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.position = "none") +
+  #geom_text(aes(label = paste("n = ", ncolonies, "colonies"), x=tirage, y=0.93), position = "dodge") +
+  coord_flip() +
+  ylab("taux de croissance annuel lambda (médiane +Icr 95%)")
+  
+
+```
+
+
+

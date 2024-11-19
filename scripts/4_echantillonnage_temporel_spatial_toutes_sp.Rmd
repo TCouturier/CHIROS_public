@@ -1,0 +1,2407 @@
+---
+title: "Echantillonnage spatial et temporel chiros"
+author: "Thibaut Couturier"
+output:
+  html_document: 
+  toc : TRUE
+  
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, options(digits=3))
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(cowplot)
+```
+
+
+Analyse en date du 
+`r Sys.Date()`
+
+# Importation, préparation des données
+
+```{r results = FALSE}
+data <- read_csv2("../data/BBF20220117_export_chiros_hiver_CEFE+TC.csv")
+
+data %>%
+  mutate(CD_SITE=as.factor(CD_SITE),
+         COMMUNE=as.factor(COMMUNE),
+         LIEU_DIT=as.factor(LIEU_DIT),
+         LOCALISATION=as.factor(LOCALISATION),
+         PRECISION=as.factor(PRECISION),
+         TYPE=as.factor(TYPE),
+         CD_RELEVE=as.factor(CD_RELEVE),
+         DATE_OBS=lubridate::dmy(DATE_OBS),
+         OBSERVATEUR=as.factor(OBSERVATEUR),
+         METHODE=as.factor(METHODE),
+         SAISON=as.factor(SAISON),
+         TAXON=as.factor(TAXON),
+         STATUT=as.factor(STATUT),
+         ans=str_sub(SAISON,7,10)) -> data 
+
+nb_na<-19 # seuil de Na appliqué au filtre
+
+```
+
+ 
+
+# Sélection 100 sites à Petit rhinolophes
+
+On filtre les données sur 20 ans (2000-2019), on retient les sites avec au moins deux relevés de Petits rhinolophes au cours de cette période, et au moins un individu contacté. On tire 100 sites selon un échantillonnage pondéré par le log de leur effectif moyen calculé sur 20 ans.  
+
+```{r eval = FALSE}
+
+########################
+######### Petit rhinolophe 
+########################
+
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_petit_rhino
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_petit_rhino_filtre3
+
+
+#########################
+#  TIRAGE : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+#########################
+
+data_petit_rhino_filtre3 %>%
+  sample_n(size=100, weight=mean_log) -> SEL_100_petit_rhino
+
+SEL_100_petit_rhino %>%
+  mutate(tirage='1- SEL100_petit_rhino') %>%
+  select(mean, tirage) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Rhinolophus hipposideros") -> petit_rhino
+```
+
+
+```{r, eval = FALSE, fig.width=4, fig.height=3.5}
+SEL_100_petit_rhino %>%
+  mutate(tirage='1- SEL100_petit_rhino') %>%
+  select(mean, tirage) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 13),
+        axis.title.y = element_text(size = 13),
+        axis.text.x = element_text(size=12), 
+        axis.text.y = element_text(size = 12),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") 
+```
+
+Liste des sites retenus et effectifs moyens en Petits rhinolophes
+
+```{r eval=FALSE}
+
+SEL_100_petit_rhino %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  head(100) %>%
+  knitr::kable() 
+
+``` 
+
+
+
+# Effectifs moyens des autres espèces sur ces 100 sites
+
+On récupère les effectifs moyens de chaque espèce obtenus lors de la même période sur ces sites issus de l'échantillonnage "Petit rhinolophe". On compare avec l'ensemble des sites potentiels pour chaque espèce et avec un tirage basé sur 100 sites (pondérés par l'effectif moyen de chaque espèce).    
+
+## Grand rhinolophe
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Rhinolophus ferrumequinum (Schreber, 1774)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_grand_rhino
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_grand_rhino %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_grand_rhino_filtre3
+
+
+#########################
+#  TIRAGE : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 20ans
+#########################
+
+data_grand_rhino_filtre3 %>%
+  sample_n(size=100, weight=mean_log) %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_grand_rhino') -> SEL_100_grand_rhino
+
+
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_grand_rhino_SEL100_petit_rhino
+
+
+data_grand_rhino_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_100_grand_rhino) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Rhinolophus ferrumequinum") -> grand_rhino
+
+
+
+
+```
+
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_grand_rhino_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_grand_rhino') -> tous_grand_rhino
+
+
+data_grand_rhino_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_grand_rhino) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Rhinolophus ferrumequinum") -> grand_rhino_tous
+
+
+```
+
+## Grand Murin
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis myotis (Borkhausen, 1797)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_grand_murin
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_grand_murin %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_grand_murin_filtre3
+
+
+#########################
+#  TIRAGE : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 20ans
+#########################
+
+data_grand_murin_filtre3 %>%
+  sample_n(size=100, weight=mean_log) %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_grand_murin') -> SEL_100_grand_murin
+
+
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_grand_murin_SEL100_petit_rhino
+
+
+data_grand_murin_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_100_grand_murin) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis myotis") -> grand_murin
+
+
+
+```
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_grand_murin_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_grand_murin') -> tous_grand_murin
+
+
+data_grand_murin_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_grand_murin) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis myotis") -> grand_murin_tous
+
+
+```
+
+## Murin de Daubenton
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_daubenton
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_daubenton %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_daubenton_filtre3
+
+
+#########################
+#  TIRAGE : 100 colonies, échantillonnage des colonies pondéré par le log de leur taille moyenne obtenue sur 15ans
+#########################
+
+data_daubenton_filtre3 %>%
+  sample_n(size=100, weight=mean_log) %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_daubenton') -> SEL_100_daubenton
+
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_daubenton_SEL100_petit_rhino
+
+
+data_daubenton_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_100_daubenton) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis daubentonii") -> daubenton
+
+```
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_daubenton_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_daubenton') -> tous_daubenton
+
+
+data_daubenton_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_daubenton) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis emarginatus") -> daubenton_tous
+
+
+```
+
+## Murin de Bechstein
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis bechsteinii (Kuhl, 1817)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_bechstein
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_bechstein %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_bechstein_filtre3
+
+
+#########################
+#  TIRAGE : on prend toutes les colonies avec Bechstein
+#########################
+
+data_bechstein_filtre3   %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_bechstein') -> SEL_bechstein
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_bechstein_SEL100_petit_rhino
+
+
+data_bechstein_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_bechstein) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis bechsteinii") -> bechstein
+
+```
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_bechstein_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_bechstein') -> tous_bechstein
+
+
+data_bechstein_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_bechstein) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis bechsteinii") -> bechstein_tous
+
+
+```
+
+## Murin de Natterer
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis nattereri (Kuhl, 1817)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_natterer
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_natterer %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_natterer_filtre3
+
+
+#########################
+#  TIRAGE : on prend toutes les colonies avec Natterer
+#########################
+
+data_natterer_filtre3   %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_natterer') -> SEL_natterer
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_natterer_SEL100_petit_rhino
+
+
+data_natterer_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_natterer) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis nattereri") -> natterer
+
+```
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_natterer_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_natterer') -> tous_natterer
+
+
+data_natterer_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_natterer) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis nattererii") -> natterer_tous
+
+
+```
+
+## Murin à oreilles échancrées
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_echancrees
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_echancrees %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_echancrees_filtre3
+
+
+#########################
+#  TIRAGE : on prend toutes les colonies avec Natterer
+#########################
+
+data_echancrees_filtre3   %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_echancrees') -> SEL_echancrees
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_echancrees_SEL100_petit_rhino
+
+
+data_echancrees_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_echancrees) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis emarginatus") -> echancrees
+
+```
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_echancrees_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_echancrees') -> tous_echancrees
+
+
+data_echancrees_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_echancrees) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis emarginatus") -> echancrees_tous
+
+
+```
+
+## complexe Murins
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Myotis alcathoe/Myotis brandtii/Myotis mystacinus complexe"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_complexe_murins
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_complexe_murins %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_complexe_murins_filtre3
+
+
+#########################
+#  TIRAGE : on prend toutes les colonies avec Natterer
+#########################
+
+data_complexe_murins_filtre3   %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_complexe_murins') -> SEL_complexe_murins
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_complexe_murins_SEL100_petit_rhino
+
+
+data_complexe_murins_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_complexe_murins) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("complexe Murins") -> complexe_murins
+
+```
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_complexe_murins_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_complexe_murins') -> tous_complexe_murins
+
+
+data_complexe_murins_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_complexe_murins) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("complexe Murins") -> complexe_murins_tous
+
+
+```
+
+## Barbastelle
+
+```{r, eval=FALSE, fig.width=5, fig.height=5}
+
+espece<-"Barbastella barbastellus (Schreber, 1774)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_barbastelle
+
+
+########################  
+## FILTRES : on prend sur 20 ans (2000-2019), on retient les sites avec au moins x relevés, et au moins un individu contacté. 
+#########################
+
+data_barbastelle %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_barbastelle_filtre3
+
+
+#########################
+#  TIRAGE : on prend toutes les colonies avec Natterer
+#########################
+
+data_barbastelle_filtre3   %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='2- SEL100_barbastelle') -> SEL_barbastelle
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_100_petit_rhino$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- SEL100_petit_rhino') -> data_barbastelle_SEL100_petit_rhino
+
+
+data_barbastelle_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(SEL_barbastelle) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Barbastella barbastellus") -> barbastelle
+
+```
+
+
+```{r, eval=FALSE, fig.width=7, fig.height=5}
+# visualisation avec tous les sites
+
+data_barbastelle_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_barbastelle') -> tous_barbastelle
+
+
+data_barbastelle_SEL100_petit_rhino %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_barbastelle) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Barbastella barbastellus") -> barbastelle_tous
+
+
+```
+
+## Graphe
+
+__Effectifs moyens obtenus pour l'espèce sur les 100 sites "Petits rhinolophes" (rose) et effectifs moyens pour chaque espèce sur l'ensemble des sites potentiels (bleu)__   
+
+ 
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+plot_grid( petit_rhino,  grand_rhino_tous, grand_murin_tous, bechstein_tous, daubenton_tous, natterer_tous, echancrees_tous, complexe_murins_tous, barbastelle_tous,  labels=c("A", "B", "C", "D", "E", "F", "G", "H", "I"), ncol = 3, nrow = 3)
+```
+
+
+__Effectifs moyens obtenus pour l'espèce sur les 100 sites "Petits rhinolophes" (rose) et tirage de 100 sites par pondération de l'effectif moyen de l'espèce parmi tous les sites potentiels (bleu)__   
+
+
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+plot_grid( petit_rhino,  grand_rhino, grand_murin, bechstein, daubenton, natterer, echancrees, complexe_murins, barbastelle,  labels=c("A", "B", "C", "D", "E", "F", "G", "H", "I"), ncol = 3, nrow = 3)
+```
+
+
+
+# Mélange 100 sites Petits rhinos et 15 autres sites à forts effectifs pour chaque espèce
+
+On conserve les 100 sites sélectionnés par pondération de la taille pour le Petit rhinolophe. On y ajoute les 15 sites avec les plus forts effectifs moyens pour chaque espèce. On écarte la Barbastelle car tendances impossibles à estimer. On retire à la fin les doublons (sites sélectionnés plusieurs fois pour différentes espèces).
+
+
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+
+
+# on sélectionne les plus gros sites pour chaque espèce
+
+gros_sites<-15 # nb de gros sites
+
+data_grand_rhino_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_grand_rhino
+
+data_grand_murin_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_grand_murin
+
+data_daubenton_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_daubenton
+
+data_bechstein_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_bechstein
+
+data_natterer_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_natterer
+
+data_echancrees_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_echancrees
+
+data_complexe_murins_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_complexe_murins
+
+data_barbastelle_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_complexe_barbastelle
+
+
+# on met tous les sites ensemble, on supprime les doublons. 
+SEL_100_petit_rhino %>%
+  select(CD_SITE, mean) %>%
+  bind_rows(select_grand_rhino, select_grand_murin, select_daubenton, select_bechstein, select_natterer, select_echancrees, select_complexe_murins) %>%
+  distinct(CD_SITE) -> selection
+
+
+``` 
+
+__nombre de sites retenus : n = r nrow(selection)__
+
+
+## Petit rhinolophe 
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_petit_rhino_selection
+
+data_petit_rhino_filtre3 %>%
+  select(CD_SITE, mean) %>%
+  mutate(tirage='3- tous_petit_rhino') -> tous_petit_rhino
+
+
+data_petit_rhino_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_petit_rhino) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Rhinolophus ferrumequinum") -> petit_rhino_selection
+
+
+``` 
+
+
+
+## Grand rhinolophe 
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Rhinolophus ferrumequinum (Schreber, 1774)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_grand_rhino_selection
+
+
+
+data_grand_rhino_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_grand_rhino) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Rhinolophus ferrumequinum") -> grand_rhino_selection
+
+
+``` 
+
+## Grand murin
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Myotis myotis (Borkhausen, 1797)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_grand_murin_selection
+
+
+
+data_grand_murin_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_grand_murin) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis myotis") -> grand_murin_selection
+
+
+``` 
+
+
+## Murin de Daubenton
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_daubenton_selection
+
+
+
+data_daubenton_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_daubenton) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis daubentonii") -> daubenton_selection
+
+
+``` 
+
+## Murin de Bechstein
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Myotis bechsteinii (Kuhl, 1817)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_bechstein_selection
+
+
+
+data_bechstein_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_bechstein) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis bechsteinii") -> bechstein_selection
+
+
+``` 
+
+
+## Murin de Natterer
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+espece<-"Myotis nattereri (Kuhl, 1817)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_natterer_selection
+
+
+
+data_natterer_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_natterer) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis nattereri") -> natterer_selection
+
+
+``` 
+
+
+## Murin à oreilles échancrées
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_echancrees_selection
+
+
+
+data_echancrees_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_echancrees) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Myotis emarginatus") -> echancrees_selection
+
+
+``` 
+
+
+## Complexe Murins
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+
+espece<-"Myotis alcathoe/Myotis brandtii/Myotis mystacinus complexe"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_complexe_murins_selection
+
+
+
+data_complexe_murins_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_complexe_murins) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("complexe_murins") -> complexe_murins_selection
+
+
+``` 
+
+
+
+## Barbastelle (non utilisé)
+```{r eval = FALSE,  fig.width=7, fig.height=5}
+
+#########################
+#  on récupère les données qui correspondent aux sites tirés pour le Petit rhinolophe. 
+#########################
+
+espece<-"Barbastella barbastellus (Schreber, 1774)"
+
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% selection$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  mutate(tirage='1- selection') -> data_barbastelle_selection
+
+
+
+data_barbastelle_selection %>%
+  select(mean, tirage) %>%
+  bind_rows(tous_barbastelle) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean, fill=tirage), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  #ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") +
+  ggtitle("Barbastella barbastellus") -> barbastelle_selection
+
+
+``` 
+
+
+## Graphe
+
+Effectif moyen obtenu pour l'espèce sur les r nrow(selection) sites sélectionnés (rose) et effectifs moyens pour chaque espèce sur l'ensemble des sites potentiels (bleu)
+
+ 
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+plot_grid( petit_rhino_selection,  grand_rhino_selection, grand_murin_selection, bechstein_selection, daubenton_selection, natterer_selection, echancrees_selection, complexe_murins_selection, labels=c("A", "B", "C", "D", "E", "F", "G", "H"), ncol = 3, nrow = 3)
+```
+
+## Tableau sites
+
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+
+data_grand_rhino_selection %>%
+  select(CD_SITE, mean)  -> grand_rhino_s
+
+data_grand_murin_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_grand_murin= mean) -> grand_murin_s
+
+data_daubenton_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_daubenton= mean) -> daubenton_s
+
+data_bechstein_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_bechstein= mean) -> bechstein_s
+
+data_natterer_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_natterer= mean) -> natterer_s
+
+data_echancrees_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_echancrees= mean) -> echancrees_s
+
+data_complexe_murins_selection %>%
+  select(CD_SITE, mean) %>%
+  rename(mean_complexe_murins= mean) -> complexe_murins_s
+
+
+data_petit_rhino_selection %>%
+  select(CD_SITE, mean) %>%
+  left_join(grand_rhino_s, by='CD_SITE', suffix = c(".petit_rhino", ".grand_rhino")) %>%
+  left_join(grand_murin_s, by='CD_SITE') %>%
+  left_join(daubenton_s, by='CD_SITE') %>%
+  left_join(bechstein_s, by='CD_SITE') %>%
+  left_join(natterer_s, by='CD_SITE') %>%
+  left_join(echancrees_s, by='CD_SITE') %>%
+  left_join(complexe_murins_s, by='CD_SITE') -> recap_selection_mean_especes 
+
+
+# write_csv2(recap_selection_mean_especes, '../outputs/recap_selection_mean_especes.csv')
+
+```
+
+
+Liste des r nrow(selection) sites retenus et effectifs moyens par espèce
+
+```{r eval=FALSE }
+
+recap_selection_mean_especes %>%
+  arrange(CD_SITE) %>%  knitr::kable() 
+
+
+``` 
+
+
+# Récupération 127 sites échantillonnage décembre 2023 (présenté dans le rapport) : 
+
+```{r eval=FALSE }
+
+
+SEL_127 <- read_csv2("../outputs/recap_selection_mean_especes.csv")
+
+data %>%
+  group_by(CD_SITE) %>%
+  slice(1) %>%
+  left_join(SEL_127, by="CD_SITE") %>%
+  filter(!is.na(mean.petit_rhino)) %>%
+  select(-c(CD_RELEVE, DATE_OBS, OBSERVATEUR, METHODE, SAISON, TAXON, EFFECTIF, ans))  -> SEL_127_infos
+
+# write_csv2(SEL_127_infos, '../outputs/SEL_127_infos.csv')
+
+``` 
+
+
+
+# Ajout de sites pour liste complémentaire (septembre 2024)
+
+On conserve les 100 sites sélectionnés par pondération de la taille pour le Petit rhinolophe. On y ajoute les 15 sites avec les plus forts effectifs moyens pour chaque espèce. O
+
+```{r eval = FALSE,  fig.width=10, fig.height=10}
+
+
+# on reprend ici le filtre pour les petits rhinos (idem les autres espèces)
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+
+
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_petit_rhino
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<nb_na & mean!=0) -> data_petit_rhino_filtre3
+
+
+
+
+# on sélectionne les plus gros sites pour chaque espèce
+
+gros_sites<-5 # nb de gros sites
+
+
+data_petit_rhino_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_petit_rhino
+
+data_grand_rhino_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_grand_rhino
+
+data_grand_murin_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_grand_murin
+
+data_daubenton_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_daubenton
+
+data_bechstein_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_bechstein
+
+data_natterer_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_natterer
+
+data_echancrees_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_echancrees
+
+data_complexe_murins_filtre3 %>%
+  filter(!CD_SITE %in% SEL_127_infos$CD_SITE) %>%
+  select(CD_SITE, mean) %>%
+  arrange(desc(mean)) %>%
+  slice(1:gros_sites) -> select_complexe_murins
+
+
+
+# on met tous les sites ensemble, on supprime les doublons. 
+select_petit_rhino %>%
+  select(CD_SITE, mean) %>%
+  bind_rows(select_grand_rhino, select_grand_murin, select_daubenton, select_bechstein, select_natterer, select_echancrees, select_complexe_murins) %>%
+  distinct(CD_SITE) -> SEL_liste_comp
+
+SEL_liste_comp %>%
+  mutate(ordre_tirage= sample(x=seq(1:nrow(SEL_liste_comp)), size=nrow(SEL_liste_comp))) %>%
+  arrange(ordre_tirage) -> SEL_liste_comp
+
+
+
+data %>%
+  group_by(CD_SITE) %>%
+  slice(1) %>%
+  inner_join(SEL_liste_comp, by="CD_SITE") %>%
+  select(-c(CD_RELEVE, DATE_OBS, OBSERVATEUR, METHODE, SAISON, TAXON, EFFECTIF, ans)) %>%
+  arrange(ordre_tirage) -> SEL_liste_comp_infos
+
+
+# write_csv2(SEL_liste_comp_infos, '../outputs/selection_liste_complementaire.csv')
+
+``` 
+
+__nombre de sites complémentaires retenus : n = `r nrow(selection_liste_complementaire)`__
+
+
+
+
+## Test échantillonnage sur données réelles 
+
+## Petit rhinolophe
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_127_petit_rhino/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_127_petit_rhino/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_hipposideros/SEL_127_petit_rhino/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus hipposideros",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.2)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Rhinolophus hipposideros") -> petit_rhino
+  
+```
+
+
+## Grand rhinolophe
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_127_grand_rhino/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_127_grand_rhino/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/rhinolophus_ferrumequinum/SEL_127_grand_rhino/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Rhinolophus ferrumequinum",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Rhinolophus ferrumequinum") -> grand_rhino
+  
+```
+
+
+## Grand murin
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_127_grand_murin/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_127_grand_murin/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_myotis/SEL_127_grand_murin/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis myotis",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.2)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Myotis myotis") -> grand_murin
+  
+```
+
+## Murin de Daubenton
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_127_daubenton/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_127_daubenton/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_daubentonii/SEL_127_daubenton/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis daubentonii",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Myotis daubentonii") -> daubenton
+  
+```
+
+## Murin de Bechstein
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_127_bechstein/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_127_bechstein/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_bechsteinii/SEL_127_bechstein/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis bechsteinii",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Myotis beschsteinii") -> bechstein
+  
+```
+
+## Murin de Natterer
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_127_natterer/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_127_natterer/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_nattereri/SEL_127_natterer/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis nattereri",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Myotis nattereri") -> natterer
+  
+```
+
+
+## Murin à oreilles échancrées
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_127_echancrees/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_127_echancrees/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/myotis_emarginatus/SEL_127_echancrees/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Myotis emarginatus",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.95, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Myotis emarginatus") -> echancrees
+  
+```
+
+
+## Complexe murins
+```{r results = FALSE}
+summary_complet<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_127_complexe_murins/recap_mu.lam_SEL_127_complet.csv")
+
+summary_complet %>%
+  as.data.frame() %>%
+  mutate(taxon="Complexe murins",
+         nom_tirage="complet",
+         tirage="tout") %>%
+  slice(1) -> SEL_127_complet
+
+summary_samp6<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_127_complexe_murins/summary_samp6.csv")
+
+summary_samp6 %>%
+  as.data.frame() %>%
+  mutate(taxon="Complexe murins",
+         nom_tirage="samp06",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp6
+
+summary_samp7<- read_csv2("C:/Thibaut/_AMI_2020/chiros/save_bayesien/complexe_murins/SEL_127_complexe_murins/summary_samp7.csv")
+
+summary_samp7 %>%
+  as.data.frame() %>%
+  mutate(taxon="Complexe murins",
+         nom_tirage="samp07",
+         tirage="1 sur 2") %>%
+  slice(2) -> SEL_127_samp7
+
+
+
+########### on compile tout
+
+SEL_127_complet %>%
+  bind_rows(SEL_127_samp6, SEL_127_samp7) -> SEL_127_temp_sample
+
+```
+
+
+```{r, fig.width=4, fig.height=3.5}
+SEL_127_temp_sample %>%
+  ggplot()  +
+  #facet_grid(selection ~ filtre, scales='free_y') +
+  theme_bw() +
+  geom_hline(yintercept=1, color="red", size=1) +
+  geom_point(aes(x=nom_tirage, y=`50%`), size=2) +
+  geom_errorbar(aes(x=nom_tirage, ymin=`2.5%`, ymax=`97.5%`), width=.3, size=1) +
+  scale_y_continuous(limits=c(0.9, 1.15)) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=11), 
+        axis.text.y = element_blank(),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10))  +
+  geom_text(aes(label = paste("", tirage), x=nom_tirage, y=0.95), position = "dodge") +
+  coord_flip() +
+  ylab("lambda annuel (med. +Icr 95%)") +
+  ggtitle("Complexe murins") -> complexe_murins
+  
+```
+
+
+
+
+```{r results = FALSE,  fig.width=9, fig.height=9}
+plot_grid(bechstein, daubenton, complexe_murins, natterer, grand_murin,  petit_rhino , grand_rhino, echancrees,  labels=c("B", "C", "D", "E", "F", "G", "H", "I"), ncol = 3, nrow = 3)
+```
+
+
+Tests sur données brutes
+```{r results = FALSE}
+
+SEL_127 <- read_csv2("../outputs/recap_selection_mean_especes.csv")
+
+
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_127$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup()  -> data_petit_rhino_selection
+
+
+#########################
+# on échantillonne selon différentes fréquences
+#########################
+
+###### tout
+data_petit_rhino_selection %>%
+  select(CD_SITE, `2000`, `2001`, `2002`, `2003`, `2004`,`2005`, `2006`,`2007`, `2008`,`2009`,`2010`, `2011`,`2012`, `2013`,`2014`, `2015`,`2016`, `2017`,`2018`,`2019`, mean, mean_log) -> samp_tout
+
+###### une année sur deux, 
+
+data_petit_rhino_selection %>%
+  select(CD_SITE, `2001`, `2003`, `2005`, `2007`, `2009`, `2011`, `2013`, `2015`, `2017`, `2019`, mean, mean_log) -> samp6
+
+###### une année sur deux, en supprimant les colonnes, alterné avec fois précédente. 
+
+data_petit_rhino_selection %>%
+  select(CD_SITE, `2000`, `2002`, `2004`, `2006`, `2008`, `2010`, `2012`, `2014`, `2016`, `2018`, mean, mean_log) -> samp7
+```
+
+
+```{r results = FALSE,  fig.width=5, fig.height=5}
+
+samp_tout %>%
+  filter(mean>=50) %>%
+  select(1:21) %>%
+  pivot_longer(c('2000':'2019'), names_to = c("année"), values_to = "effectif") %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=1) +
+  geom_point(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=2) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size=10),
+        legend.position="none") 
+
+```
+```{r results = FALSE,  fig.width=5, fig.height=5}
+
+samp6 %>%
+  filter(mean>=50) %>%
+  select(1:11) %>%
+  pivot_longer(c('2001':'2019'), names_to = c("année"), values_to = "effectif") %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=1) +
+  geom_point(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=2) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size=10),
+        legend.position="none") 
+
+```
+
+
+```{r results = FALSE,  fig.width=5, fig.height=5}
+
+samp7 %>%
+  filter(mean>=50) %>%
+  select(1:11) %>%
+  pivot_longer(c('2000':'2018'), names_to = c("année"), values_to = "effectif") %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=1) +
+  geom_point(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=2) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size=10),
+        legend.position="none") 
+
+```
+
+
+
+
+
+
+
+
+
+Ici pour récupérer ces sites sélectionnées en decembre 2023 et infos petit rhino : 
+
+```{r eval=FALSE }
+SEL_127 <- read_csv2("../outputs/tirage_decembre2023/recap_selection_mean_especes_dec23.csv")
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+
+data %>%
+  filter(TAXON %in% espece & CD_SITE %in% SEL_127$CD_SITE) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> SEL_127_petit_rhino
+
+SEL_127_petit_rhino %>%
+  ungroup() %>%
+  select(1,23:42) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup()  -> SEL_127_petit_rhino
+
+```
+
+```{r, eval = FALSE, fig.width=3, fig.height=2.5}
+SEL_127_petit_rhino %>%
+  select(mean) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean), position="identity", alpha=.3) +
+  theme(axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        axis.text.x = element_text(size=13), 
+        axis.text.y = element_text(size = 13),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10),
+        legend.position='none') +
+  ylim(0, 100) +
+  xlab("effectifs moyens") + 
+  ylab("nombre de sites") 
+```

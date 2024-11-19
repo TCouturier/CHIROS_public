@@ -1,0 +1,1265 @@
+---
+title: "Visualisation données brutes"
+author: "Thibaut Couturier"
+output:
+  html_document: 
+  toc : TRUE
+  
+  
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, options(digits=5))
+```
+
+```{r}
+library(tidyverse)
+library(lubridate)
+```
+
+
+Analyse en date du 
+`r Sys.Date()`
+
+
+```{r results = FALSE}
+data <- read_csv2("../data/BBF20220117_export_chiros_hiver_CEFE+TC.csv")
+
+data %>%
+  mutate(CD_SITE=as.factor(CD_SITE),
+         COMMUNE=as.factor(COMMUNE),
+         LIEU_DIT=as.factor(LIEU_DIT),
+         LOCALISATION=as.factor(LOCALISATION),
+         PRECISION=as.factor(PRECISION),
+         TYPE=as.factor(TYPE),
+         CD_RELEVE=as.factor(CD_RELEVE),
+         DATE_OBS=lubridate::dmy(DATE_OBS),
+         OBSERVATEUR=as.factor(OBSERVATEUR),
+         METHODE=as.factor(METHODE),
+         SAISON=as.factor(SAISON),
+         TAXON=as.factor(TAXON),
+         STATUT=as.factor(STATUT),
+         ans=str_sub(SAISON,7,10)) -> data 
+```
+__nombre de lignes__ = `r nrow(data)`  
+__nombre de taxons__ = `r length(levels(data$TAXON))`  
+__nom des taxons__ = `r levels(data$TAXON)`   
+__nombre de sites__ = `r length(levels(data$CD_SITE))`    
+__dates min/max__ = `r range(data$DATE_OBS, na.rm=TRUE)`  
+__années min/max__ = `r range(data$ans, na.rm=TRUE)`
+
+
+Les graphes suivants présentent, pour chacun des sites, la longueur des séries temporelles de relevés (abscisse) en fonction des effectifs moyens obtenus sur la série temporelle (ordonnées)
+
+# Taxons retenus lors des analyses
+
+Petit rhinolophe  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> petits_rhinos_nb_releves_eff 
+
+
+petits_rhinos_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Murin de Daubenton  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis daubentonii (Kuhl, 1817)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> daubentons_nb_releves_eff 
+
+
+daubentons_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Grand murin  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis myotis (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> gds_murins_nb_releves_eff 
+
+
+gds_murins_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Grand rhinolophe  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus ferrumequinum (Schreber, 1774)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> gds_rhinos_nb_releves_eff 
+
+
+gds_rhinos_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Barbastelle  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Barbastella barbastellus (Schreber, 1774)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> barbas_nb_releves_eff 
+
+
+barbas_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Murin à oreilles échancrées  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> echancre_nb_releves_eff 
+
+
+echancre_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Murin de Natterer
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis nattereri (Kuhl, 1817)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> natterer_nb_releves_eff 
+
+
+natterer_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+Murin de Bechstein  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis bechsteinii (Kuhl, 1817)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> bechstein_nb_releves_eff 
+
+
+bechstein_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+
+# Taxons non retenus lors de l'analyse
+
+
+Rhinolophe euryale  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus euryale Blasius, 1853" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> euryale_nb_releves_eff 
+
+
+euryale_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Minioptère de Schreiber  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Miniopterus schreibersii (Natterer in Kuhl, 1817)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> minio_nb_releves_eff 
+
+
+minio_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+
+Plecotus sp.  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Plecotus sp." & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> Plecotus_nb_releves_eff 
+
+
+Plecotus_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Myotis sp.  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Myotis sp." & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> myotis_sp_nb_releves_eff 
+
+
+myotis_sp_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+
+Chiroptera sp.  
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Chiroptera sp." & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site rattach\xe9')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_relev=sum(!is.na(effectif)),
+             mean_n=round(mean(effectif, na.rm=TRUE))) -> chiroptera_sp_nb_releves_eff 
+
+
+chiroptera_sp_nb_releves_eff  %>%
+  ggplot() +
+  theme_bw() +
+  geom_point(aes(x=n_relev, mean_n), color='blue', size=3, alpha=.2) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années de relevés") + 
+  ylab("effectifs moyens") 
+
+```
+
+# Exploration exemple Petit rhinolophe
+
+Les données collectées sur les "sites mères" sont exclues, ainsi que les sites où aucun relevé de cette espèce n'a été réalisé entre `r min(data$ans, na.rm=TRUE)` et `r max(data$ans, na.rm=TRUE)`. Lorsque plusieurs passages ont été réalisés une année donnée, nous avons conservé le premier d'entre eux. 
+
+```{r results = FALSE}
+# très important : .preserve=TRUE pour conserver les valeurs à 0 dans le group_by
+
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) -> data_petit_rhino
+
+``` 
+Le tableau suivant présente les sites échantillonnés en lignes (uniquement les 15 premiers, parmi n = `r nrow(data_petit_rhino)`), les années en colonnes (`r ncol(data_petit_rhino)-1`), et les effectifs relevés. Les NA traduisent ainsi une absence de prospection d'un site donné une année donnée. 
+
+```{r }
+
+data_petit_rhino %>%
+  head(15) %>%
+  knitr::kable() 
+
+``` 
+
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n)  %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(annee) %>%
+  summarise (n_NA=sum(is.na(effectif))/n()) %>%
+  mutate(n_pros=1-n_NA) -> NA_petits_rhinos_annees 
+```
+
+Cette proportion de NA varie entre `r min(NA_petits_rhinos_annees$n_NA)` et `r max(NA_petits_rhinos_annees$n_NA)` selon les années. 
+
+```{r results = FALSE, fig.width=9, fig.height=4.5}
+NA_petits_rhinos_annees %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x = annee, y=n_NA), stat='identity', fill='red', alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("année") + 
+  ylab("proportion de données manquantes (NA)") 
+
+```
+
+```{r results = FALSE, fig.width=8, fig.height=4}
+NA_petits_rhinos_annees %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x = annee, y=n_pros), stat='identity', fill='blue', alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=11, angle=90), 
+        axis.text.y = element_text(size = 11),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("année") + 
+  ylab("proportion de sites prospectés") 
+
+```
+
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  pivot_longer(!CD_SITE, names_to = "annee", values_to = "effectif") %>%
+  group_by(CD_SITE) %>%
+  summarise (n_NA=sum(is.na(effectif))/n()) -> NA_petits_rhinos_sites 
+```
+
+Peu de sites (n = `r nrow(NA_petits_rhinos_sites %>% filter(n_NA<0.8))`) présentent des séries temporelles avec plus de 20% de relevés sur l'ensemble de la période considérée.
+```{r results = FALSE, fig.width=8, fig.height=4}
+NA_petits_rhinos_sites %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=1-n_NA), stat='count', fill='red', alpha=.3) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("proportion d'années avec des relevés") + 
+  ylab("nombre de sites") 
+
+```
+
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (EFFECTIF) %>%
+  slice(1) %>%
+  arrange(ans) -> petits_rhinos_comptages 
+```
+
+
+Parmi `r nrow(petits_rhinos_comptages)` relevés de petits rhinolophes, `r nrow(petits_rhinos_comptages%>%filter(EFFECTIF==0))` relevés révèlent une absence de l'espèce (effectif=0).  
+`r nrow(petits_rhinos_comptages%>%filter(EFFECTIF==1))` relevés ont un seul individu contacté. `r nrow(petits_rhinos_comptages%>%filter(EFFECTIF>=100))` relevés ont enregistré des effectifs supérieurs à 100 individus. L'effectif maximum enregistré est de `r max(petits_rhinos_comptages$EFFECTIF)` individus. 
+
+
+```{r results = FALSE, fig.width=11, fig.height=4}
+petits_rhinos_comptages %>%
+  filter(EFFECTIF>0) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=EFFECTIF), stat='count', fill='red', alpha=.4) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("effectif par site (exclusion préalable des effectifs à 0)") + 
+  ylab("nombre de relevés")
+
+```
+
+Zoom sur les relevés inférieurs à 100 :
+
+```{r results = FALSE, fig.width=11, fig.height=4}
+petits_rhinos_comptages %>%
+  filter(EFFECTIF>0 & EFFECTIF<100) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=EFFECTIF), stat='count', fill='red', alpha=.4) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("effectif par site (exclusion préalable des effectifs à 0 et supérieurs à 100)") + 
+  ylab("nombre de relevés")
+
+```
+
+```{r results = FALSE}
+data %>%
+  filter(TAXON %in% "Rhinolophus hipposideros (Borkhausen, 1797)" & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  group_by(CD_SITE) %>%
+  summarise (mean_n=round(mean(EFFECTIF)),
+             sd_n=sd(EFFECTIF)) -> petits_rhinos_mean_comptages 
+```
+
+`r nrow(petits_rhinos_mean_comptages%>%filter(mean_n==0))` sites ont une moyenne de comptages en Petits rhinolophes proche de 0. `r nrow(petits_rhinos_mean_comptages%>%filter(mean_n==1))` sites ont en moyenne un individu. Quelques sites (n = `r nrow(petits_rhinos_mean_comptages%>%filter(mean_n>=100))`) abritent des effectifs supérieurs à 100 individus en moyenne. 
+
+```{r results = FALSE, fig.width=11, fig.height=4}
+petits_rhinos_mean_comptages %>%
+  filter(mean_n>0) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean_n), stat='count', fill='red', alpha=.4) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("abondance moyenne par site (exclusion préalable des sites à 0)") + 
+  ylab("nombre de sites")
+
+```
+
+
+Zoom sur les sites avec effectifs moyens inférieurs à 100 :
+
+```{r results = FALSE, fig.width=11, fig.height=4}
+petits_rhinos_mean_comptages %>%
+  filter(mean_n>0 & mean_n<100) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x=mean_n), stat='count', fill='red', alpha=.4) +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size = 12),
+        axis.text.x = element_text(size=10, angle=90), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("abondance moyenne par site (exclusion préalable des sites à 0)") + 
+  ylab("nombre de sites")
+
+```
+
+Ici le nombre de colonies selon les différentes durées de suivis (nombre d'années de relevés entre 2005 et 2019) :  
+
+```{r results = FALSE, fig.width=7, fig.height=4}
+data_petit_rhino %>%
+  ungroup() %>%
+  select(25:39) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2005':'2019'), na.rm=TRUE),
+         n_annees=sum(!is.na(c_across('2005':'2019')))) %>%
+  ungroup()  %>%
+  group_by(n_annees) %>%
+  summarise(n_sites=n()) -> nb_annees
+  
+
+nb_annees %>%
+  filter(n_annees>1) %>%
+  ggplot() +
+  theme_bw() +
+  geom_histogram(aes(x = n_annees, y=n_sites), stat='identity', fill='red', alpha=.3) +
+  theme(axis.title.x = element_text(size = 11),
+        axis.title.y = element_text(size = 11),
+        axis.text.x = element_text(size=10), 
+        axis.text.y = element_text(size = 10),
+        legend.title = element_text(colour="black", size=11),
+        legend.text = element_text(size=10)) +
+  xlab("nombre d'années échantillonnées entre 2004 et 2019 (sans les colonies échantillonnées 1 fois)") + 
+  ylab("nombre de colonies") 
+
+```
+
+
+```{r eval = FALSE} 
+# distribution tailles colonies 
+data_petit_rhino %>%
+  ungroup() %>%
+  select(26:40) %>%
+  filter(rowSums(is.na(.)) < na_limit) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2006':'2020'), na.rm=TRUE),
+         poids=case_when(max==0 ~ 0, 
+                         max>=0 & max<5 ~ 1,
+                         max>=5 & max<20 ~ 2,
+                         max>=20 & max<100 ~ 3,
+                         max>=100 ~ 4)) %>%
+  ungroup()  %>%
+  group_by(poids) %>%
+  summarise(n=n()) 
+```
+
+Ici les séries temporelles des effectifs des 20 plus grosses colonies (>100 individus au moins une fois) entre 2005 et 2019 (15 ans) :  
+
+```{r results = FALSE, fig.width=7, fig.height=4}
+
+data_petit_rhino %>%
+  ungroup() %>%
+  select(1, 25:39) %>%
+  rowwise() %>%
+  mutate(max=max(c_across('2005':'2019'), na.rm=TRUE)) %>%
+  filter(max>=100) %>%
+  select(-'max') %>%
+  pivot_longer(c('2005':'2019'), names_to = c("année"), values_to = "effectif") %>%
+  ungroup() %>%
+  ggplot() +
+  geom_line(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=1) +
+  geom_point(aes(x = année, y=effectif, group=CD_SITE, color=CD_SITE), size=2) +
+  theme_bw() +
+  theme(axis.title.x = element_text(size = 12),
+        axis.title.y = element_text(size=12),
+        axis.text.x = element_text(size=10), 
+        axis.text.y = element_text(size=10),
+        legend.position="none") 
+
+```
+
+
+
+# Filtres espèces
+
+## Echantillonnage spatial
+```{r results = FALSE}
+
+
+seuil_na<-14
+
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_petit_rhino
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Petit rhinolophe',
+         nb_sites_filtre = nrow(na_petit_rhino)) -> nsites_petit_rhino
+
+espece<-"Barbastella barbastellus (Schreber, 1774)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_barbastelle
+
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Barbastelle',
+         nb_sites_filtre = nrow(na_barbastelle)) -> nsites_barbastelle
+
+
+
+espece<-"Myotis bechsteinii (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_bechstein
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Bechstein',
+         nb_sites_filtre = nrow(na_bechstein)) -> nsites_bechstein
+
+
+espece<-"Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_echancrees
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin à oreilles échancrées',
+         nb_sites_filtre = nrow(na_echancrees)) -> nsites_echancrees 
+
+
+espece<-"Myotis alcathoe/Myotis brandtii/Myotis mystacinus complexe"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_complexe
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='complexe Murins',
+         nb_sites_filtre = nrow(na_complexe)) -> nsites_complexe 
+
+
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_daubenton
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Daubenton',
+         nb_sites_filtre = nrow(na_daubenton)) -> nsites_daubenton 
+
+
+espece<-"Myotis myotis (Borkhausen, 1797)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_grand_murin
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Grand murin',
+         nb_sites_filtre = nrow(na_grand_murin)) -> nsites_grand_murin 
+
+
+espece<-"Rhinolophus ferrumequinum (Schreber, 1774)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_grand_rhino
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Grand rhinolophe',
+         nb_sites_filtre = nrow(na_grand_rhino)) -> nsites_grand_rhino 
+
+
+espece<-"Myotis nattereri (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,25:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2005':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2005':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)   -> na_natterer
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Natterer',
+         nb_sites_filtre = nrow(na_natterer)) -> nsites_natterer 
+
+
+bind_rows(nsites_barbastelle, nsites_bechstein, nsites_echancrees, nsites_daubenton, nsites_natterer, nsites_complexe, nsites_grand_murin, nsites_petit_rhino, nsites_grand_rhino) %>%
+  select(-V1) -> nsites_filtre
+
+#write_csv2(nsites_filtre, 'nsites_filtre_14_spatial.csv')
+
+```
+
+__Tableau : Nombre de sites hivernaux disponibles après application du filtre de moins de `r seuil_na` données manquantes sur site sur 15 ans par espèce__  
+
+```{r }
+
+nsites_filtre %>%
+  head(10) %>%
+  knitr::kable() 
+
+``` 
+
+## Echantillonnage temporel
+
+```{r results = FALSE}
+
+
+seuil_na<-16
+
+espece<-"Rhinolophus hipposideros (Borkhausen, 1797)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_petit_rhino
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Petit rhinolophe',
+         nb_sites_filtre = nrow(na_petit_rhino)) -> nsites_petit_rhino
+
+espece<-"Barbastella barbastellus (Schreber, 1774)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_barbastelle
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Barbastelle',
+         nb_sites_filtre = nrow(na_barbastelle)) -> nsites_barbastelle
+
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Petit rhinolophe',
+         nb_sites_filtre = nrow(na_petit_rhino)) -> nsites_petit_rhino
+
+espece<-"Myotis bechsteinii (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_bechstein
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Bechstein',
+         nb_sites_filtre = nrow(na_bechstein)) -> nsites_bechstein
+
+
+espece<-"Myotis emarginatus (E. Geoffroy Saint-Hilaire, 1806)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_echancrees
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin à oreilles échancrées',
+         nb_sites_filtre = nrow(na_echancrees)) -> nsites_echancrees 
+
+
+espece<-"Myotis alcathoe/Myotis brandtii/Myotis mystacinus complexe"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_complexe
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='complexe Murins',
+         nb_sites_filtre = nrow(na_complexe)) -> nsites_complexe 
+
+
+espece<-"Myotis daubentonii (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_daubenton
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Daubenton',
+         nb_sites_filtre = nrow(na_daubenton)) -> nsites_daubenton 
+
+
+espece<-"Myotis myotis (Borkhausen, 1797)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_grand_murin
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Grand murin',
+         nb_sites_filtre = nrow(na_grand_murin)) -> nsites_grand_murin 
+
+
+espece<-"Rhinolophus ferrumequinum (Schreber, 1774)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_grand_rhino
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Grand rhinolophe',
+         nb_sites_filtre = nrow(na_grand_rhino)) -> nsites_grand_rhino 
+
+
+espece<-"Myotis nattereri (Kuhl, 1817)"
+data %>%
+  filter(TAXON %in% espece & !is.na(EFFECTIF) & STATUT %in% c('Site normal', 'Site_rattache')) %>%
+  group_by(CD_SITE, ans, EFFECTIF) %>%
+  summarise (n=sum(EFFECTIF)) %>%
+  slice(1) %>%
+  arrange(ans) %>%
+  pivot_wider(id_cols=CD_SITE, names_from=ans, values_from=n) %>%
+  ungroup() %>%
+  select(1,20:39) %>%
+  rowwise() %>%
+  mutate(mean=mean(c_across('2000':'2019'), na.rm=TRUE),
+         mean_log=log(mean+1),
+         n_na=sum(is.na(c_across('2000':'2019')))) %>%
+  ungroup() %>%
+  filter(n_na<seuil_na & mean!=0) %>%
+  select(n_na)  -> na_natterer
+
+tab<-matrix(nrow=1, ncol=1)
+tab %>%
+  as.data.frame %>%
+  mutate(espece='Murin de Natterer',
+         nb_sites_filtre = nrow(na_natterer)) -> nsites_natterer 
+
+
+bind_rows(nsites_barbastelle, nsites_bechstein, nsites_echancrees, nsites_daubenton, nsites_natterer, nsites_complexe, nsites_grand_murin, nsites_petit_rhino, nsites_grand_rhino) %>%
+  select(-V1) -> nsites_filtre
+
+#write_csv2(nsites_filtre, 'nsites_filtre_16_temporel.csv')
+
+```
+
+__Tableau : Nombre de sites hivernaux disponibles après application du filtre de moins de `r seuil_na` données manquantes sur site sur 20 ans par espèce__ 
+
+```{r }
+
+nsites_filtre %>%
+  head(10) %>%
+  knitr::kable() 
+
+``` 
+
+
+
